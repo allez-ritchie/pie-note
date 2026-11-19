@@ -1,0 +1,38 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/.idea/
+*.jks
+*.keystore
+keystore.properties
+.cxx/
+*.apk
+*.aab
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# 会话间临时交接文档（仅模板 README.md 跟踪）
+.agents/handoff/*
+!.agents/handoff/README.md
+
+# OS
+.DS_Store
+Thumbs.db
