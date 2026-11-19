@@ -73,6 +73,22 @@ void main() {
       expect(() => normalizeBaseUrl('file:///tmp/notebook'), _throwsBadRequest());
     });
 
+    test('中文输入法常见的全角标点会被归一化为半角', () {
+      // 真机上中文输入法会把 `:` `.` `/` 打成全角，用户不应因此无法保存配置。
+      expect(
+        normalizeBaseUrl('http：／／192。168。31。24：5055'),
+        'http://192.168.31.24:5055',
+      );
+      expect(
+        normalizeBaseUrl('１９２.１６８.３１.２４:５０５５'),
+        'http://192.168.31.24:5055',
+      );
+      expect(
+        normalizeBaseUrl('http://192.168.31.24：5055/'),
+        'http://192.168.31.24:5055',
+      );
+    });
+
     test('缺少 host 的输入抛 ApiException 且 kind 为 badRequest', () {
       expect(() => normalizeBaseUrl('http://'), _throwsBadRequest());
       expect(() => normalizeBaseUrl('http:///notebook'), _throwsBadRequest());

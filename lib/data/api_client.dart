@@ -118,7 +118,9 @@ enum ApiErrorKind { unauthorized, forbidden, notFound, badRequest, server, netwo
 ///
 /// 非法输入抛 [ApiException]（kind 为 badRequest），由 UI 转成表单错误提示。
 String normalizeBaseUrl(String raw) {
-  var input = raw.trim();
+  // 中文输入法常把半角标点转成全角（`：`、`。`、`／`），这里先做一次归一化，
+  // 避免用户粘贴/输入 `http：／／192。168。31。24：5055` 时被判为非法地址。
+  var input = _normalizeFullWidth(raw).trim();
   if (input.isEmpty) {
     throw const ApiException('后端地址不能为空', kind: ApiErrorKind.badRequest);
   }
@@ -148,6 +150,31 @@ String normalizeBaseUrl(String raw) {
     port: uri.hasPort ? uri.port : null,
     path: path,
   ).toString();
+}
+
+/// 把全角 ASCII（U+FF01–U+FF5E）与全角空格统一转成半角。
+///
+/// 中文输入法常把 `:` `.` `/` 甚至数字打成全角，用户不应因此无法保存配置。
+/// 全角 ASCII 与半角 ASCII 相差固定 0xFEE0，按码位整体偏移即可。
+String _normalizeFullWidth(String raw) {
+  final buffer = StringBuffer();
+  for (final rune in raw.runes) {
+    if (rune >= 0xFF01 && rune <= 0xFF5E) {
+      buffer.writeCharCode(rune - 0xFEE0);
+    } else if (rune == 0x3000) {
+      // 全角空格
+      buffer.write(' ');
+    } else if (rune == 0x3002) {
+      // 中文句号「。」常被输入法当作小数点
+      buffer.write('.');
+    } else if (rune == 0x3001) {
+      // 顿号
+      buffer.write(',');
+    } else {
+      buffer.writeCharCode(rune);
+    }
+  }
+  return buffer.toString();
 }
 
 /// Open Notebook REST 客户端。
