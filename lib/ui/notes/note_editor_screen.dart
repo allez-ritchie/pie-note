@@ -7,9 +7,19 @@ import '../common/formatters.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import 'editor_strings.dart';
+import 'live_preview_editor.dart';
+import 'markdown_blocks.dart';
+import 'markdown_tasks.dart';
+import 'markdown_toolbar.dart';
 import 'markdown_view.dart';
 
 enum _LeaveAction { save, discard, cancel }
+
+/// 编辑器视图模式，对应 Obsidian「视图 + 模式」的简化：
+/// - [live] 实时预览：渲染态直接编辑，点按段落就地展开该段源码（Live Preview）；
+/// - [source] 源码模式：整篇 Markdown 纯文本编辑；
+/// - [reading] 阅读视图：只渲染不可编辑，任务复选框仍可勾选。
+enum EditorViewMode { live, source, reading }
 
 /// 笔记编辑器：编辑 / 预览双模式，新建与编辑共用。
 class NoteEditorScreen extends ConsumerStatefulWidget {
@@ -45,7 +55,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   bool _dirty = false;
   bool _saving = false;
   bool _loadingRemote = false;
-  bool _preview = false;
+  EditorViewMode _viewMode = EditorViewMode.live;
   bool _changed = false;
   bool _allowPop = false;
   String? _loadError;
@@ -252,72 +262,43 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Markdown 工具条编辑操作
+  // 视图模式与预览态编辑
   // ---------------------------------------------------------------------------
 
-  void _insertInline(String prefix, String suffix, {String placeholder = ''}) {
-    final text = _contentController.text;
-    final selection = _contentController.selection;
-    final start = selection.isValid ? selection.start : text.length;
-    final end = selection.isValid ? selection.end : text.length;
-    final selected = text.substring(start, end);
-    final body = selected.isEmpty ? placeholder : selected;
-    final newText = text.replaceRange(start, end, '$prefix$body$suffix');
-    final int cursor;
-    int selectionStart = -1;
-    int selectionEnd = -1;
-    if (selected.isEmpty && placeholder.isNotEmpty) {
-      selectionStart = start + prefix.length;
-      selectionEnd = selectionStart + placeholder.length;
-      cursor = selectionEnd;
-    } else {
-      cursor = start + prefix.length + body.length + suffix.length;
-    }
-    _contentController.value = TextEditingValue(
-      text: newText,
-      selection: selectionStart >= 0
-          ? TextSelection(baseOffset: selectionStart, extentOffset: selectionEnd)
-          : TextSelection.collapsed(offset: cursor),
-    );
-    _contentFocus.requestFocus();
+  void _setViewMode(EditorViewMode mode) {
+    if (mode == _viewMode) return;
+    // 切换前先让输入框失焦，确保实时预览里的段落编辑已提交。
+    FocusScope.of(context).unfocus();
+    setState(() => _viewMode = mode);
   }
 
-  void _toggleLinePrefix(String prefix) {
-    final text = _contentController.text;
+  /// 勾选任务列表复选框：直接改写整篇正文里的 `[ ]` / `[x]`。
+  ///
+  /// 正文控制器变化不一定触发本页重建（脏标记可能已经是 true），
+  /// 因此显式 `setState`，让预览立即反映勾选结果。
+  void _toggleTask(int index) {
+    final next = MarkdownTasks.toggle(_contentController.text, index);
+    if (next == null || next == _contentController.text) return;
     final selection = _contentController.selection;
-    final cursor = selection.isValid ? selection.start : text.length;
-    final previousBreak = text.lastIndexOf('\n', cursor == 0 ? 0 : cursor - 1);
-    final lineStart = previousBreak == -1 ? 0 : previousBreak + 1;
-    final nextBreak = text.indexOf('\n', cursor);
-    final lineEnd = nextBreak == -1 ? text.length : nextBreak;
-    final line = text.substring(lineStart, lineEnd);
-    final newLine = line.startsWith(prefix)
-        ? line.substring(prefix.length)
-        : '$prefix$line';
-    final newText = text.replaceRange(lineStart, lineEnd, newLine);
-    final offset = (cursor + (newLine.length - line.length)).clamp(0, newText.length);
-    _contentController.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: offset),
-    );
-    _contentFocus.requestFocus();
+    setState(() {
+      _contentController.value = TextEditingValue(
+        text: next,
+        selection: selection.isValid ? selection : TextSelection.collapsed(offset: 0),
+      );
+    });
   }
 
-  void _insertCodeBlock() {
-    final text = _contentController.text;
-    final selection = _contentController.selection;
-    final start = selection.isValid ? selection.start : text.length;
-    final end = selection.isValid ? selection.end : text.length;
-    final selected = text.substring(start, end);
-    final needsLeadingBreak = start > 0 && text[start - 1] != '\n';
-    final insertion = '${needsLeadingBreak ? '\n' : ''}```\n$selected\n```\n';
-    final newText = text.replaceRange(start, end, insertion);
-    final offset = start + insertion.length;
-    _contentController.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: offset.clamp(0, newText.length)),
-    );
-    _contentFocus.requestFocus();
+  /// 实时预览里的「切到源码」：切到源码模式并选中该段。
+  void _editBlockAsSource(MarkdownBlock block) {
+    setState(() => _viewMode = EditorViewMode.source);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _contentController.selection = TextSelection(
+        baseOffset: block.start,
+        extentOffset: block.end,
+      );
+      _contentFocus.requestFocus();
+    });
   }
 
   @override
@@ -338,14 +319,46 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           ),
           title: Text(_noteId == null ? EditorStrings.newNote : '编辑笔记'),
           actions: [
-            IconButton(
-              tooltip: _preview ? EditorStrings.edit : EditorStrings.preview,
-              onPressed: () => setState(() => _preview = !_preview),
+            PopupMenuButton<EditorViewMode>(
+              tooltip: EditorStrings.switchMode,
+              initialValue: _viewMode,
+              onSelected: _setViewMode,
               icon: Icon(
-                _preview
-                    ? Icons.edit_outlined
-                    : Icons.visibility_outlined,
+                switch (_viewMode) {
+                  EditorViewMode.live => Icons.edit_note_rounded,
+                  EditorViewMode.source => Icons.code_rounded,
+                  EditorViewMode.reading => Icons.visibility_outlined,
+                },
               ),
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: EditorViewMode.live,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.edit_note_rounded),
+                    title: Text(EditorStrings.modeLive),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: EditorViewMode.source,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.code_rounded),
+                    title: Text(EditorStrings.modeSource),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: EditorViewMode.reading,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.visibility_outlined),
+                    title: Text(EditorStrings.modeReading),
+                  ),
+                ),
+              ],
             ),
             Badge(
               isLabelVisible: _dirty,
@@ -452,20 +465,29 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                       ),
                 ),
               const Spacer(),
-              Text(
-                '${_contentController.text.length} 字',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+              // 实时预览的就地编辑不会逐字符重建本页，用监听保证字数实时。
+              ListenableBuilder(
+                listenable: _contentController,
+                builder: (context, _) => Text(
+                  '${_contentController.text.length} 字',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
               ),
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
-          child: _preview ? _buildPreview() : _buildEditor(scheme),
+          child: switch (_viewMode) {
+            EditorViewMode.live => _buildLivePreview(),
+            EditorViewMode.source => _buildEditor(scheme),
+            EditorViewMode.reading => _buildPreview(),
+          },
         ),
-        if (!_preview) _MarkdownToolbar(state: this),
+        if (_viewMode == EditorViewMode.source)
+          MarkdownToolbar(controller: _contentController, focusNode: _contentFocus),
       ],
     );
   }
@@ -495,6 +517,54 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     );
   }
 
+  /// 进入源码模式并聚焦正文（空笔记的「开始书写」入口）。
+  void _startWriting() {
+    setState(() => _viewMode = EditorViewMode.source);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _contentFocus.requestFocus();
+    });
+  }
+
+  /// 实时预览：渲染态 + 点按段落就地编辑。
+  ///
+  /// 正文为空（例如新建笔记）时没有可点按的段落，展示「开始书写」入口，
+  /// 点击进入源码模式；不随内容自动切换，避免输入首字时界面跳变、光标丢失。
+  Widget _buildLivePreview() {
+    if (_contentController.text.trim().isEmpty) {
+      return _EmptyDraftPrompt(onStart: _startWriting);
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: Row(
+            children: [
+              Icon(Icons.touch_app_rounded, size: 15, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  EditorStrings.liveHint,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: LivePreviewEditor(
+            controller: _contentController,
+            onToggleTask: _toggleTask,
+            onEditAsSource: _editBlockAsSource,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPreview() {
     final content = _contentController.text;
     if (content.trim().isEmpty) {
@@ -513,157 +583,42 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-      child: MarkdownView(content: content),
+      child: MarkdownView(content: content, onToggleTask: _toggleTask),
     );
   }
 }
 
-/// 编辑模式下的 Markdown 快捷工具条。
-class _MarkdownToolbar extends StatelessWidget {
-  const _MarkdownToolbar({required this.state});
+/// 空笔记的实时预览占位：引导用户进入源码模式开始书写。
+class _EmptyDraftPrompt extends StatelessWidget {
+  const _EmptyDraftPrompt({required this.onStart});
 
-  final _NoteEditorScreenState state;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        border: Border(top: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.6))),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 52,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            children: [
-              _ToolTextButton(
-                label: 'H1',
-                tooltip: EditorStrings.toolH1,
-                onTap: () => state._toggleLinePrefix('# '),
-              ),
-              _ToolTextButton(
-                label: 'H2',
-                tooltip: EditorStrings.toolH2,
-                onTap: () => state._toggleLinePrefix('## '),
-              ),
-              _ToolIconButton(
-                icon: Icons.format_bold_rounded,
-                tooltip: EditorStrings.toolBold,
-                onTap: () => state._insertInline('**', '**', placeholder: '加粗文本'),
-              ),
-              _ToolIconButton(
-                icon: Icons.format_italic_rounded,
-                tooltip: EditorStrings.toolItalic,
-                onTap: () => state._insertInline('*', '*', placeholder: '斜体文本'),
-              ),
-              _ToolIconButton(
-                icon: Icons.format_strikethrough_rounded,
-                tooltip: EditorStrings.toolStrike,
-                onTap: () => state._insertInline('~~', '~~', placeholder: '删除文本'),
-              ),
-              _ToolIconButton(
-                icon: Icons.code_rounded,
-                tooltip: EditorStrings.toolCode,
-                onTap: () => state._insertInline('`', '`', placeholder: 'code'),
-              ),
-              _ToolIconButton(
-                icon: Icons.data_object_rounded,
-                tooltip: EditorStrings.toolCodeBlock,
-                onTap: state._insertCodeBlock,
-              ),
-              _ToolIconButton(
-                icon: Icons.format_list_bulleted_rounded,
-                tooltip: EditorStrings.toolBullet,
-                onTap: () => state._toggleLinePrefix('- '),
-              ),
-              _ToolIconButton(
-                icon: Icons.format_list_numbered_rounded,
-                tooltip: EditorStrings.toolNumbered,
-                onTap: () => state._toggleLinePrefix('1. '),
-              ),
-              _ToolIconButton(
-                icon: Icons.format_quote_rounded,
-                tooltip: EditorStrings.toolQuote,
-                onTap: () => state._toggleLinePrefix('> '),
-              ),
-              _ToolIconButton(
-                icon: Icons.check_box_outlined,
-                tooltip: EditorStrings.toolCheckbox,
-                onTap: () => state._toggleLinePrefix('- [ ] '),
-              ),
-              _ToolIconButton(
-                icon: Icons.link_rounded,
-                tooltip: EditorStrings.toolLink,
-                onTap: () => state._insertInline('[', '](https://)', placeholder: '链接文本'),
-              ),
-              _ToolTextButton(
-                label: '[[ ]]',
-                tooltip: EditorStrings.toolWiki,
-                onTap: () => state._insertInline('[[', ']]', placeholder: '笔记标题'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ToolIconButton extends StatelessWidget {
-  const _ToolIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onTap,
-      iconSize: 21,
-      icon: Icon(icon),
-    );
-  }
-}
-
-class _ToolTextButton extends StatelessWidget {
-  const _ToolTextButton({
-    required this.label,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  final String label;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          width: 44,
-          height: 52,
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.edit_note_rounded, size: 44, color: scheme.primary),
+            const SizedBox(height: 14),
+            Text(
+              EditorStrings.emptyPreview,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onStart,
+              icon: const Icon(Icons.edit_rounded),
+              label: const Text(EditorStrings.startWriting),
+            ),
+          ],
         ),
       ),
     );

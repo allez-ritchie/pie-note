@@ -14,7 +14,8 @@
 - 后端是局域网/内网自建的 Open Notebook（默认 `http://<host>:5055`），
   App 通过其 REST API 读写**笔记本（notebook）与笔记（note）**；
 - 首次启动必须配置**后端 Base URL** 与**访问密码**，配置通过校验后才能进入主界面；
-- 以 **Markdown** 作为笔记正文格式，提供编辑/预览双模式；
+- 以 **Markdown** 作为笔记正文格式，编辑器提供**实时预览 / 源码 / 阅读**三视图
+  （参考 Obsidian：默认实时预览，点按段落就地展开该段源码；阅读视图可直接勾选任务列表）；
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
 - 密码只用于生成 `Authorization: Bearer <password>` 请求头，绝不明文落盘；
 - **暂不处理 Markdown 中的图片链接**（`![](...)` 按普通文本/占位显示，不做图片加载）。
@@ -88,7 +89,12 @@
 | `lib/ui/setup/setup_screen.dart` | 首次启动配置页：Base URL + 密码 + 连接测试。 |
 | `lib/ui/home/home_shell.dart` | 主界面骨架（底部导航：笔记本 / 最近 / 搜索 / 设置）。 |
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页。 |
-| `lib/ui/notes/` | 笔记编辑页（编辑/预览切换、保存、删除）与 Markdown 预览组件。 |
+| `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存、删除、未保存拦截。 |
+| `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
+| `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
+| `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
+| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
+| `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
 | `lib/ui/settings/settings_screen.dart` | 后端地址、密码、连接测试、退出配置。 |
 | `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）。 |
@@ -144,6 +150,10 @@ flutter build apk --debug
    打开笔记正文渲染 Markdown 标题/代码块/列表正常；编辑并保存后
    `curl -H "Authorization: Bearer <pw>" http://127.0.0.1:5055/api/notes/<id>` 内容已更新；
    搜索页输入关键词能命中后端笔记；`settings` 里改密码为错误值后测试连接应失败并提示。
+5. 实时预览验证点：打开含标题/任务列表/代码块/引用的笔记，默认应以渲染态展示；
+   点按某一段落，仅该段展开为源码输入框（其余仍渲染），工具条可插入 Markdown；
+   点「完成」或空白处收起并还原渲染；点任务复选框应立即勾选并标为「未保存」；
+   保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱。
 
 ---
 
@@ -260,6 +270,9 @@ build(android): 放行局域网明文 HTTP 后端地址
   **不要**在 `StatefulWidget` 里手写 `isLoading` 布尔与业务数据字段。
 - 编辑中的笔记草稿只在内存保存；离开页面前若有未保存改动必须拦截确认，
   避免误丢内容。保存失败时保留草稿并提示重试，不要清空编辑器。
+- 编辑器三视图共用同一个 `TextEditingController`：实时预览的就地编辑必须写回整篇正文，
+  因此**不要**在分块/组件里另存整篇副本；改写正文的路径（勾选复选框、段落提交、
+  切视图）都要走 `MarkdownSourceMap` / `MarkdownTasks` 的偏移量，避免破坏块间空白。
 
 ### 7.3 UI
 

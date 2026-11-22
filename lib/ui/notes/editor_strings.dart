@@ -9,8 +9,6 @@ class EditorStrings {
   static const String saving = '保存中…';
   static const String savedToast = '笔记已保存';
   static const String saveFailed = '保存失败';
-  static const String preview = '预览';
-  static const String edit = '编辑';
   static const String deleteTitle = '删除笔记';
   static const String deleteMessage = '确定删除当前笔记吗？删除后不可恢复。';
   static const String delete = '删除';
@@ -24,6 +22,19 @@ class EditorStrings {
   static const String savedAt = '上次保存';
   static const String neverSaved = '尚未保存';
   static const String emptyPreview = '（内容为空，切回编辑模式开始书写）';
+
+  // 视图模式（参考 Obsidian：实时预览 / 源码 / 阅读）
+  static const String modeLive = '实时预览';
+  static const String modeSource = '源码';
+  static const String modeReading = '阅读';
+  static const String switchMode = '视图模式';
+  static const String liveHint = '点按任意段落即可就地编辑，点击空白处收起';
+  static const String liveEditingBlock = '正在编辑本段';
+  static const String liveDone = '完成';
+  static const String startWriting = '开始书写';
+  static const String liveSourceToggle = '切到源码';
+  static const String taskDone = '已完成';
+  static const String taskTodo = '未完成';
 
   // Markdown 工具条
   static const String toolH1 = '一级标题';

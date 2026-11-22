@@ -5,32 +5,63 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/providers.dart';
 import '../common/navigation.dart';
+import 'editor_strings.dart';
 
-/// Markdown 只读预览。
+/// Markdown 预览。
 ///
 /// 约定：
 /// - `[[标题]]` 会渲染成可点击的双链，点击后在全部笔记中按标题查找并跳转；
 /// - `![alt](url)` **不加载图片**，渲染为占位块（本仓库暂不处理图片链接）；
-/// - `http/https` 外链交给系统浏览器打开。
+/// - `http/https` 外链交给系统浏览器打开；
+/// - 传入 [onToggleTask] 时，任务列表复选框可点击切换（预览时编辑）；
+/// - 传入 [onTapText] 时，点击渲染文本会回调（实时预览用来就地展开该段源码）。
 class MarkdownView extends ConsumerWidget {
-  const MarkdownView({super.key, required this.content, this.padding});
+  const MarkdownView({
+    super.key,
+    required this.content,
+    this.padding,
+    this.onTapText,
+    this.onToggleTask,
+    this.taskStartIndex = 0,
+  });
 
   final String content;
   final EdgeInsets? padding;
+
+  /// 点击渲染文本时回调。
+  final VoidCallback? onTapText;
+
+  /// 切换任务列表复选框；参数是**全篇**的任务项序号（第 N 个复选框）。
+  final ValueChanged<int>? onToggleTask;
+
+  /// 本段内容之前已有多少任务项，用于把局部序号换算成全篇序号。
+  final int taskStartIndex;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final styleSheet = _buildStyleSheet(theme);
+    // 复选框按文档顺序构建，用闭包计数把「第几个复选框」换算成全篇序号。
+    var localTaskIndex = 0;
     return MarkdownBody(
       data: transformWikiLinks(content),
       selectable: true,
       styleSheet: styleSheet,
+      onTapText: onTapText,
       onTapLink: (text, href, title) => _handleLink(context, ref, href),
-      imageBuilder: (uri, title, alt) => _ImagePlaceholder(
-        uri: uri,
-        alt: alt,
+      imageBuilder: (uri, title, alt) => GestureDetector(
+        onTap: onTapText,
+        child: _ImagePlaceholder(uri: uri, alt: alt),
       ),
+      checkboxBuilder: onToggleTask == null
+          ? null
+          : (checked) {
+              final index = taskStartIndex + localTaskIndex++;
+              return _TaskCheckbox(
+                checked: checked,
+                onToggle: () => onToggleTask!(index),
+              );
+            },
     );
   }
 
@@ -136,6 +167,38 @@ class MarkdownView extends ConsumerWidget {
       tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       horizontalRuleDecoration: BoxDecoration(
         border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+    );
+  }
+}
+
+/// 任务列表复选框：预览态可直接点选，切换源码里的 `[ ]` / `[x]`。
+class _TaskCheckbox extends StatelessWidget {
+  const _TaskCheckbox({required this.checked, required this.onToggle});
+
+  final bool checked;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      checked: checked,
+      inMutuallyExclusiveGroup: true,
+      label: checked ? EditorStrings.taskDone : EditorStrings.taskTodo,
+      child: InkResponse(
+        onTap: onToggle,
+        radius: 20,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          child: Icon(
+            checked
+                ? Icons.check_box_rounded
+                : Icons.check_box_outline_blank_rounded,
+            size: 21,
+            color: checked ? scheme.primary : scheme.onSurfaceVariant,
+          ),
+        ),
       ),
     );
   }
