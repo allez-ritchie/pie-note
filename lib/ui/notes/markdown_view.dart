@@ -19,14 +19,12 @@ class MarkdownView extends ConsumerWidget {
   const MarkdownView({
     super.key,
     required this.content,
-    this.padding,
     this.onTapText,
     this.onToggleTask,
     this.taskStartIndex = 0,
   });
 
   final String content;
-  final EdgeInsets? padding;
 
   /// 点击渲染文本时回调。
   final VoidCallback? onTapText;
