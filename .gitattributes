@@ -1,0 +1,10 @@
+# Flutter/Dart 源文件统一按 LF 检出。
+#
+# 背景：Windows 上 core.autocrlf=true 会把工作区文件转成 CRLF，但 Flutter 工具
+# 生成/重写 `*/flutter/generated_*` 时始终写 LF，于是每次 `flutter build`/`pub get`
+# 之后这些文件都会在 `git status` 里显示为「已修改」，而内容其实完全一致
+# （`git diff --ignore-cr-at-eol` 为空）。这里把生成的插件注册文件固定为 LF，
+# 让工作区、索引与工具输出三者一致。
+*/flutter/generated_*.cc   text eol=lf
+*/flutter/generated_*.h    text eol=lf
+*/flutter/generated_*.cmake text eol=lf
