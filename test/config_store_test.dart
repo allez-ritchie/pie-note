@@ -21,16 +21,18 @@ class _MemorySecretStore implements SecretStore {
   }
 }
 
-/// 模拟 Keystore 数据损坏：读取时抛异常。
+/// 模拟安全存储不可用（Keystore 损坏 / Linux 没有 Secret Service）：
+/// 读取与写入都抛异常。
 class _ThrowingSecretStore implements SecretStore {
   @override
   Future<String?> read(String key) async => throw StateError('keystore corrupted');
 
   @override
-  Future<void> write(String key, String value) async {}
+  Future<void> write(String key, String value) async =>
+      throw StateError('secret service unavailable');
 
   @override
-  Future<void> delete(String key) async {}
+  Future<void> delete(String key) async => throw StateError('secret service unavailable');
 }
 
 void main() {
@@ -121,6 +123,20 @@ void main() {
     expect(config.baseUrl, isEmpty);
     expect(config.password, isEmpty);
     expect(config.isConfigured, isFalse);
+  });
+
+  test('安全存储写入失败时抛 SecretStorageException，且不落 Base URL', () async {
+    final broken = ConfigStore(
+      preferences: preferences,
+      secretStore: _ThrowingSecretStore(),
+    );
+
+    await expectLater(
+      broken.save(const AppConfig(baseUrl: 'http://host:5055', password: 'pw')),
+      throwsA(isA<SecretStorageException>()),
+    );
+    // 密码没写成功就不能把地址写进去，否则会留下「已配置但没有密码」的半配置状态。
+    expect((await broken.load()).baseUrl, isEmpty);
   });
 
   test('主题模式默认 system，set light/dark 后往返一致', () async {

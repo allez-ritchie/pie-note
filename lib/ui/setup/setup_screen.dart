@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_client.dart';
+import '../../data/config_store.dart';
 import '../../data/note_repository.dart';
 import '../../state/providers.dart';
 import '../common/strings.dart';
@@ -99,6 +100,12 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
             password: _passwordController.text,
           );
     } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    } on SecretStorageException catch (e) {
+      // 密码写不进系统安全存储时不落任何明文，明确提示用户。
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
