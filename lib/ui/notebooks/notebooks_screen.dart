@@ -273,9 +273,9 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                // 左栏随窗口弹性变化：窄窗口 300、宽窗口最多 420。
+                // 左栏随窗口弹性变化：窄窗口 320、宽窗口最多 420。
                 width: (MediaQuery.sizeOf(context).width * 0.32)
-                    .clamp(300.0, 420.0),
+                    .clamp(320.0, 420.0),
                 child: Stack(
                   children: [
                     Positioned.fill(child: list),
@@ -370,6 +370,8 @@ class _AllNotesCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       NotebooksStrings.allNotesSubtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),
@@ -377,9 +379,10 @@ class _AllNotesCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     '$totalNotes',
@@ -390,6 +393,8 @@ class _AllNotesCard extends StatelessWidget {
                   ),
                   Text(
                     S.noteUnit,
+                    maxLines: 1,
+                    softWrap: false,
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
