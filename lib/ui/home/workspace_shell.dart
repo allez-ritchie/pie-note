@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../state/workspace.dart';
 import '../common/layout.dart';
 import '../common/strings.dart';
+import '../chat/chat_screen.dart';
 import '../notebooks/notebooks_screen.dart';
 import '../notebooks/notes_screen.dart';
 import '../notes/note_editor_screen.dart';
 import '../search/search_screen.dart';
 import '../settings/settings_screen.dart';
+import '../sources/sources_screen.dart';
 import 'desktop_tab_strip.dart';
 import 'mobile_floating_bar.dart';
 import 'mobile_tab_overview.dart';
@@ -181,7 +183,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final active = state.activeTab;
     // 在当前笔记所属笔记本 / 当前笔记列表里新建，保持上下文。
     final notebookId = switch (active?.kind) {
-      WorkspaceTabKind.notes => active!.targetId,
+      WorkspaceTabKind.notes ||
+      WorkspaceTabKind.sources ||
+      WorkspaceTabKind.chat => active!.targetId,
       WorkspaceTabKind.note => active!.parentId,
       _ => null,
     };
@@ -197,6 +201,23 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     switch (tab.kind) {
       case WorkspaceTabKind.notebooks:
         return const NotebooksScreen();
+      case WorkspaceTabKind.sources:
+        return SourcesScreen(
+          key: ValueKey('sources-body-${tab.id}'),
+          title: tab.title,
+          notebookId: tab.targetId,
+        );
+      case WorkspaceTabKind.chat:
+        final notebookId = tab.targetId;
+        if (notebookId == null || notebookId.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return ChatScreen(
+          key: ValueKey('chat-body-${tab.id}'),
+          title: tab.title,
+          notebookId: notebookId,
+          embedded: true,
+        );
       case WorkspaceTabKind.search:
         return const SearchScreen();
       case WorkspaceTabKind.settings:
@@ -272,6 +293,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     ref,
                     WorkspaceTabKind.notebooks,
                   ),
+              onOpenSources:
+                  () => WorkspaceNavigator.openSources(
+                    ref,
+                    title: WorkspaceStrings.allSourcesTab,
+                  ),
               onOpenSearch:
                   () => WorkspaceNavigator.openSection(
                     ref,
@@ -303,9 +329,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   Widget _buildDesktop(WorkspaceState state, Widget body) {
     final activeKind = state.activeTab?.kind;
     final railIndex = switch (activeKind) {
-      WorkspaceTabKind.search => 1,
-      WorkspaceTabKind.settings => 2,
-      WorkspaceTabKind.notebooks => 0,
+      WorkspaceTabKind.sources => 1,
+      WorkspaceTabKind.search => 2,
+      WorkspaceTabKind.settings => 3,
       _ => 0,
     };
     return Scaffold(
@@ -316,12 +342,28 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             child: NavigationRail(
               selectedIndex: railIndex,
               onDestinationSelected: (index) {
-                final kind = switch (index) {
-                  0 => WorkspaceTabKind.notebooks,
-                  1 => WorkspaceTabKind.search,
-                  _ => WorkspaceTabKind.settings,
-                };
-                WorkspaceNavigator.openSection(ref, kind);
+                switch (index) {
+                  case 0:
+                    WorkspaceNavigator.openSection(
+                      ref,
+                      WorkspaceTabKind.notebooks,
+                    );
+                  case 1:
+                    WorkspaceNavigator.openSources(
+                      ref,
+                      title: WorkspaceStrings.allSourcesTab,
+                    );
+                  case 2:
+                    WorkspaceNavigator.openSection(
+                      ref,
+                      WorkspaceTabKind.search,
+                    );
+                  default:
+                    WorkspaceNavigator.openSection(
+                      ref,
+                      WorkspaceTabKind.settings,
+                    );
+                }
               },
               labelType: NavigationRailLabelType.all,
               leading: const _RailBrand(),
@@ -330,6 +372,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   icon: Icon(Icons.folder_outlined),
                   selectedIcon: Icon(Icons.folder_rounded),
                   label: Text(S.tabNotebooks),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.travel_explore_outlined),
+                  selectedIcon: Icon(Icons.travel_explore_rounded),
+                  label: Text(S.tabSources),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.search_rounded),
@@ -459,6 +506,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onTap: () => Navigator.of(sheetContext).pop('notebooks'),
                 ),
                 ListTile(
+                  leading: const Icon(Icons.travel_explore_rounded),
+                  title: const Text(S.tabSources),
+                  onTap: () => Navigator.of(sheetContext).pop('sources'),
+                ),
+                ListTile(
                   leading: const Icon(Icons.settings_rounded),
                   title: const Text(S.tabSettings),
                   onTap: () => Navigator.of(sheetContext).pop('settings'),
@@ -484,6 +536,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     switch (action) {
       case 'notebooks':
         WorkspaceNavigator.openSection(ref, WorkspaceTabKind.notebooks);
+      case 'sources':
+        WorkspaceNavigator.openSources(ref, title: WorkspaceStrings.allSourcesTab);
       case 'settings':
         WorkspaceNavigator.openSection(ref, WorkspaceTabKind.settings);
       case 'close':
@@ -525,11 +579,13 @@ int? _digitIndexOf(LogicalKeyboardKey key) {
 class _EmptyWorkspace extends StatelessWidget {
   const _EmptyWorkspace({
     required this.onOpenNotebooks,
+    required this.onOpenSources,
     required this.onOpenSearch,
     required this.onNewNote,
   });
 
   final VoidCallback onOpenNotebooks;
+  final VoidCallback onOpenSources;
   final VoidCallback onOpenSearch;
   final VoidCallback onNewNote;
 
@@ -582,6 +638,11 @@ class _EmptyWorkspace extends StatelessWidget {
                     onPressed: onOpenNotebooks,
                     icon: const Icon(Icons.folder_open_rounded),
                     label: const Text(WorkspaceStrings.openNotebooks),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onOpenSources,
+                    icon: const Icon(Icons.travel_explore_rounded),
+                    label: const Text(WorkspaceStrings.openSources),
                   ),
                   OutlinedButton.icon(
                     onPressed: onOpenSearch,

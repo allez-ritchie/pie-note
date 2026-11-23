@@ -24,8 +24,9 @@ class WorkspaceStrings {
 
   // 空工作区
   static const String emptyTitle = '没有打开的标签页';
-  static const String emptyMessage = '从左侧选择「笔记本」或「搜索」，也可以直接新建一条笔记。';
+  static const String emptyMessage = '从左侧选择「笔记本」「来源」或「搜索」，也可以直接新建一条笔记。';
   static const String openNotebooks = '打开笔记本';
+  static const String openSources = '打开来源';
   static const String openSearch = '打开搜索';
 
   // 关闭未保存的标签页
@@ -47,6 +48,11 @@ class WorkspaceStrings {
   static const String overviewDirty = '未保存';
 
   static String tabCount(int count) => '$count 个标签页';
+
+  // 来源 / 对话标签页标题
+  static const String allSourcesTab = '全部来源';
+  static String sourcesTabOf(String notebookName) => '$notebookName · 来源';
+  static String chatTabOf(String notebookName) => '与「$notebookName」对话';
 
   // 快捷键提示（桌面端）
   static String get shortcutTabs =>

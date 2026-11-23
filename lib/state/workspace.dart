@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 ///
 /// 参考 Obsidian / VSCode：一级页面（笔记本、搜索、设置）与文档（笔记）
 /// 都是标签页，由 [WorkspaceNotifier] 统一管理打开、激活、关闭与前进后退。
-enum WorkspaceTabKind { notebooks, search, settings, notes, note }
+enum WorkspaceTabKind { notebooks, sources, search, settings, notes, note, chat }
 
 /// 一个打开的标签页。
 @immutable
@@ -42,10 +42,19 @@ class WorkspaceTab {
 
   bool get isNote => kind == WorkspaceTabKind.note;
 
+  /// 一级页面（左侧导航 / 悬浮工具栏可直达）。
   bool get isSection =>
       kind == WorkspaceTabKind.notebooks ||
+      kind == WorkspaceTabKind.sources ||
       kind == WorkspaceTabKind.search ||
       kind == WorkspaceTabKind.settings;
+
+  /// 归属于某个笔记本的页面（来源列表、对话、笔记列表、笔记）。
+  bool get isNotebookScoped =>
+      kind == WorkspaceTabKind.sources ||
+      kind == WorkspaceTabKind.notes ||
+      kind == WorkspaceTabKind.note ||
+      kind == WorkspaceTabKind.chat;
 
   WorkspaceTab copyWith({
     String? title,
@@ -201,6 +210,7 @@ class WorkspaceNotifier extends Notifier<WorkspaceState> {
   String openSection(WorkspaceTabKind kind, {required String title}) {
     assert(
       kind == WorkspaceTabKind.notebooks ||
+          kind == WorkspaceTabKind.sources ||
           kind == WorkspaceTabKind.search ||
           kind == WorkspaceTabKind.settings,
       'openSection 只接受一级页面标签',
@@ -209,6 +219,43 @@ class WorkspaceNotifier extends Notifier<WorkspaceState> {
       if (tab.kind == kind) return _activate(tab.id);
     }
     return _insert(WorkspaceTab(id: _nextId(), kind: kind, title: title));
+  }
+
+  /// 打开来源列表；[notebookId] 为 null 表示「全部来源」。
+  ///
+  /// 与笔记列表一样按笔记本复用标签页：同一个笔记本的来源只开一个标签。
+  String openSources({String? notebookId, required String title}) {
+    for (final tab in state.tabs) {
+      if (tab.kind == WorkspaceTabKind.sources && tab.targetId == notebookId) {
+        return _activate(tab.id);
+      }
+    }
+    return _insert(
+      WorkspaceTab(
+        id: _nextId(),
+        kind: WorkspaceTabKind.sources,
+        title: title,
+        targetId: notebookId,
+      ),
+    );
+  }
+
+  /// 打开某个笔记本的对话；同一笔记本只保留一个对话标签页。
+  String openChat({required String notebookId, required String title}) {
+    for (final tab in state.tabs) {
+      if (tab.kind == WorkspaceTabKind.chat && tab.targetId == notebookId) {
+        return _activate(tab.id);
+      }
+    }
+    return _insert(
+      WorkspaceTab(
+        id: _nextId(),
+        kind: WorkspaceTabKind.chat,
+        title: title,
+        targetId: notebookId,
+        parentId: notebookId,
+      ),
+    );
   }
 
   /// 打开某个笔记本的笔记列表；[notebookId] 为 null 表示「全部笔记」。
@@ -386,6 +433,20 @@ class WorkspaceNotifier extends Notifier<WorkspaceState> {
     for (final id in ids.toList(growable: false)) {
       closeTab(id);
     }
+  }
+
+  /// 关闭归属于某个笔记本的来源 / 对话标签页（笔记本被删除后调用）。
+  void closeTabsForNotebook(String notebookId) {
+    final ids = state.tabs
+        .where(
+          (tab) =>
+              (tab.kind == WorkspaceTabKind.chat ||
+                  tab.kind == WorkspaceTabKind.sources) &&
+              tab.targetId == notebookId,
+        )
+        .map((tab) => tab.id)
+        .toList(growable: false);
+    closeTabs(ids);
   }
 
   /// 关闭指向某条笔记的全部标签页（笔记被删除后调用）。

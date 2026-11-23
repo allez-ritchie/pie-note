@@ -27,7 +27,8 @@
 
 技术栈：Flutter（Dart 3.x）+ Material 3，`http` 负责网络，`flutter_secure_storage`
 （Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存 Base URL
-等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`。
+等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`，
+选择本地文件上传来源用 `file_selector`。
 
 > 本 App 的定位是**客户端**：不做离线笔记同步/冲突合并，不做本地数据库镜像。
 > 打开笔记时从后端拉取最新内容，保存时直接 `PUT` 回后端。
@@ -64,6 +65,21 @@
 | `PUT` | `/api/notes/{id}` | 更新笔记（`{title?, content?, note_type?}`） |
 | `DELETE` | `/api/notes/{id}` | 删除笔记 |
 | `POST` | `/api/search` | 搜索知识库（`{query, type: text\|vector, limit, notebook_ids?}`） |
+| `GET` | `/api/sources?notebook_id={id}&limit=&offset=&sort_by=updated&sort_order=desc` | 来源列表（单页上限 100） |
+| `GET` | `/api/sources/{id}` | 来源详情（含 `full_text` 与 `notebooks`） |
+| `POST` | `/api/sources` | 新建来源（**multipart/form-data**，见 2.4） |
+| `POST` | `/api/sources/{id}/retry` | 重新处理失败 / 卡住的来源 |
+| `DELETE` | `/api/sources/{id}` | 删除来源 |
+| `GET` | `/api/sources/{id}/status` | 处理状态轮询（`status` + `processing_info.error`） |
+| `GET` | `/api/sources/{id}/insights` | 来源洞见列表 |
+| `POST` | `/api/notebooks/{nid}/sources/{sid}` / `DELETE` 同路径 | 把已有来源加入 / 移出笔记本 |
+| `GET` | `/api/chat/sessions?notebook_id={id}` | 笔记本的对话会话列表 |
+| `POST` | `/api/chat/sessions` | 新建会话（`{notebook_id, title?, model_override?}`） |
+| `GET` | `/api/chat/sessions/{id}` | 会话详情（`messages` 为 `{id,type,content,timestamp?}`） |
+| `PUT` / `DELETE` | `/api/chat/sessions/{id}` | 改标题 / `model_override`；删除会话 |
+| `POST` | `/api/chat/context` | 按 `context_config` 构建上下文（返回 `context/token_count/char_count`） |
+| `POST` | `/api/chat/execute` | 执行一轮问答（**同步**返回完整消息列表） |
+| `GET` | `/api/models` / `/api/models/defaults` | 已注册模型 / 默认模型（对话的「模型覆盖」用） |
 | `GET` | `/api/config` / `/health` | 服务版本与健康状态 |
 
 ### 2.3 数据形状
@@ -77,6 +93,39 @@
 - `POST /api/search` 返回 `{results: [object], total_count, search_type}`，
   `results` 元素是**未强类型的 object**（不同 `type` 字段形状不同），
   客户端只按已知字段（`note_id`/`id`/`title`/`content`/`notebook_id`/`score`）做宽松解析。
+- 来源的「类型」不在 `type` 字段里，而要按 `asset` 判断：
+  `asset.url` 非空 → 链接、`asset.file_path` 非空 → 上传文件、都为空 → 文本。
+  异步创建（`async_processing=true`）时创建响应里 `asset` / `full_text` 都是 `null`，
+  要等处理完成后再拉列表/详情才能拿到真实类型。
+- `SourceListResponse` 的 `status` 可能为 `null`（老数据），取值有
+  `new` / `queued` / `running` / `completed` / `failed`；失败原因在
+  `processing_info.error`（后端已截断到 200 字）。
+- 对话的上下文协议由 `context_config` 决定，**字符串按子串匹配**：
+  `not in` 跳过、`insights` 取来源短上下文（仅 id/title/insights）、
+  `full content` 取长上下文（带正文）。笔记只支持 `full content`。
+  这些字符串是与后端共享的协议，改动必须两边同步。
+- `POST /api/chat/execute` 返回 `{session_id, messages: [...]}`，`messages` 是**完整历史**
+  （不是增量），客户端应整体覆盖本地消息列表；它同时是同步接口，模型生成完才返回。
+
+### 2.4 来源创建（multipart）
+
+`POST /api/sources` 的入参由 FastAPI 的 `Form(...)` + `File(...)` 定义，**只能走
+multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点，不要用）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `type` | `link` / `upload` / `text`（必填） |
+| `notebooks` | 笔记本 id 数组的 **JSON 字符串**，例如 `["notebook:abc"]` |
+| `title` | 标题（文本来源建议必填；为空时后端用 `Processing...` 占位） |
+| `url` / `content` | 链接 / 文本来源的正文输入 |
+| `file` | 上传文件（`upload` 类型） |
+| `embed` | 是否请求向量化，字符串 `"true"` / `"false"` |
+| `delete_source` | 处理完成后是否删除上传文件，默认 `false` |
+| `async_processing` | 是否后台处理，字符串 `"true"` / `"false"` |
+
+- 客户端固定 `async_processing=true`：立即返回 `status=new` + `command_id`，
+  之后轮询 `/api/sources/{id}/status` 到 `completed` / `failed`；
+- `embed=true` 需要后端配置嵌入模型，否则会静默不生成向量（`embedded=false`）。
 
 ---
 
@@ -107,6 +156,8 @@
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
+| `lib/ui/sources/` | 来源页：列表（状态胶囊 / 轮询）、添加来源对话框（链接 / 文本 / 文件）、详情（正文 + 洞见）。 |
+| `lib/ui/chat/` | 「与笔记本对话」：会话管理、上下文勾选、模型覆盖、消息流与「保存为笔记」。 |
 | `lib/ui/settings/settings_screen.dart` | 后端地址、密码、连接测试、退出配置。 |
 | `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）、响应式断点 `layout.dart`、平台判定 `app_platform.dart`。 |
 | `lib/ui/theme/` | Material 3 主题（浅色/深色、动态取色）。 |
@@ -420,8 +471,12 @@ build(android): 放行局域网明文 HTTP 后端地址
 - **不做图片处理**：Markdown 中的 `![](path)` 不加载、不上传，按文本显示。
 - **不做离线编辑**：断网时列表与笔记读取失败会提示错误，不提供本地缓存兜底。
 - **不做冲突合并**：同一笔记被多处同时修改时，后保存的覆盖先保存的。
-- **不做 AI 能力**：后端虽有 `/api/search/ask` 等 LLM 端点，
-  但本 App 只用到搜索/笔记 CRUD，不接入模型配置与对话。
+- **AI 能力全部由后端承担**：本 App 只调用 Open Notebook 的
+  `/api/chat/*`（笔记本对话）与 `/api/sources/*`（来源处理 / 洞见 / 向量化），
+  不内置任何模型配置、密钥或本地推理；模型选择只是把 `model_override`
+  （`model:<id>`）透传给后端，后端未注册模型或额度不足时把错误原样提示给用户。
+- **对话不是流式**：后端 `/api/chat/execute` 同步返回完整回答，
+  客户端只能在等待期间显示「AI 正在回答…」，没有逐字输出。
 - **桌面端做 Linux 与 Windows**：`linux/` 与 `windows/` 两个平台工程都已纳入版本管理，
   并各自在对应系统上验证过 release 构建；**macOS 未承诺**，需要时在 Mac 上
   `flutter create --platforms=macos .` 后自行验证。

@@ -213,10 +213,12 @@ class _TabCard extends StatelessWidget {
   static IconData _iconFor(WorkspaceTab tab) {
     return switch (tab.kind) {
       WorkspaceTabKind.notebooks => Icons.folder_rounded,
+      WorkspaceTabKind.sources => Icons.travel_explore_rounded,
       WorkspaceTabKind.search => Icons.search_rounded,
       WorkspaceTabKind.settings => Icons.settings_rounded,
       WorkspaceTabKind.notes => Icons.article_outlined,
       WorkspaceTabKind.note => Icons.description_outlined,
+      WorkspaceTabKind.chat => Icons.forum_rounded,
     };
   }
 }

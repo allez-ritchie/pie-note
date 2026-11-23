@@ -13,10 +13,13 @@ import 'package:pie_note/ui/home/desktop_tab_strip.dart';
 import 'package:pie_note/ui/home/home_shell.dart';
 import 'package:pie_note/ui/home/mobile_floating_bar.dart';
 import 'package:pie_note/ui/home/mobile_tab_overview.dart';
+import 'package:pie_note/ui/common/strings.dart';
 import 'package:pie_note/ui/home/workspace_strings.dart';
 import 'package:pie_note/ui/notebooks/notes_screen.dart';
 import 'package:pie_note/ui/notes/editor_strings.dart';
 import 'package:pie_note/ui/notes/note_editor_screen.dart';
+import 'package:pie_note/ui/chat/chat_screen.dart';
+import 'package:pie_note/ui/sources/sources_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _MemorySecretStore implements SecretStore {
@@ -91,6 +94,40 @@ ApiClient _fakeClient({List<http.Request>? requests}) {
       }
       if (path == '/api/notes') {
         return _json(notes);
+      }
+      if (path == '/api/sources' && request.method == 'GET') {
+        return _json([
+          {
+            'id': 'source:a',
+            'title': '演示来源',
+            'topics': <String>[],
+            'asset': {'file_path': null, 'url': 'https://example.com'},
+            'embedded': false,
+            'embedded_chunks': 0,
+            'insights_count': 0,
+            'created': '2026-11-20 03:00:00+00:00',
+            'updated': '2026-11-22 03:00:00+00:00',
+            'status': 'completed',
+          },
+        ]);
+      }
+      if (path == '/api/chat/sessions' && request.method == 'GET') {
+        return _json(<Object>[]);
+      }
+      if (path == '/api/chat/sessions' && request.method == 'POST') {
+        return _json({
+          'id': 'chat_session:a',
+          'title': '会话',
+          'notebook_id': 'notebook:demo',
+          'created': '2026-11-23 03:00:00+00:00',
+          'updated': '2026-11-23 03:00:00+00:00',
+          'message_count': 0,
+          'model_override': null,
+        });
+      }
+      if (path == '/api/models') return _json(<Object>[]);
+      if (path == '/api/models/defaults') {
+        return _json({'default_chat_model': null, 'default_embedding_model': null});
       }
       if (path.startsWith('/api/notes/')) {
         // 笔记 id 里带冒号，路径会被编码成 note%3Aa。
@@ -326,5 +363,82 @@ void main() {
     await tester.tap(find.text(WorkspaceStrings.openNotebooks));
     await tester.pumpAndSettle();
     expect(container.read(workspaceProvider).activeId, isNot(id));
+  });
+
+  testWidgets('桌面端：笔记本菜单可打开「来源」与「对话」标签页，各笔记本独立', (tester) async {
+    final container = await _pumpShell(tester, const Size(1280, 820));
+
+    // 打开笔记本卡片的「更多」菜单 → 查看来源。
+    await tester.tap(find.byTooltip('更多').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(S.openSources));
+    await tester.pumpAndSettle();
+
+    var state = container.read(workspaceProvider);
+    expect(state.activeTab!.kind, WorkspaceTabKind.sources);
+    expect(state.activeTab!.targetId, 'notebook:demo');
+    expect(find.byType(SourcesScreen), findsOneWidget);
+
+    // 再次打开同一笔记本的来源只切换，不重复开标签。
+    await tester.tap(_chipTitle('笔记本'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(S.openSources));
+    await tester.pumpAndSettle();
+    state = container.read(workspaceProvider);
+    expect(state.tabs.where((tab) => tab.kind == WorkspaceTabKind.sources), hasLength(1));
+
+    // 打开同一个笔记本的对话。
+    await tester.tap(_chipTitle('笔记本'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(S.openChat));
+    await tester.pumpAndSettle();
+
+    state = container.read(workspaceProvider);
+    expect(state.activeTab!.kind, WorkspaceTabKind.chat);
+    expect(state.activeTab!.targetId, 'notebook:demo');
+    expect(find.byType(ChatScreen), findsOneWidget);
+  });
+
+  testWidgets('桌面端：侧边导航的「来源」入口打开全部来源标签页', (tester) async {
+    final container = await _pumpShell(tester, const Size(1280, 820));
+
+    await tester.tap(find.text(S.tabSources).first);
+    await tester.pumpAndSettle();
+
+    final state = container.read(workspaceProvider);
+    expect(state.activeTab!.kind, WorkspaceTabKind.sources);
+    expect(state.activeTab!.targetId, isNull, reason: '全部来源没有所属笔记本');
+    expect(find.byType(SourcesScreen), findsOneWidget);
+  });
+
+  testWidgets('手机端：菜单里的「来源」入口可用，且不出现右下角 FAB', (tester) async {
+    final container = await _pumpShell(tester, const Size(430, 880));
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(MobileFloatingBar),
+        matching: find.byTooltip(WorkspaceStrings.more),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(S.tabSources));
+    await tester.pumpAndSettle();
+
+    expect(
+      container.read(workspaceProvider).activeTab!.kind,
+      WorkspaceTabKind.sources,
+    );
+    // 手机端不能有右下角 FAB（会与底部胶囊重叠）。
+    expect(
+      find.descendant(
+        of: find.byType(SourcesScreen),
+        matching: find.byType(FloatingActionButton),
+      ),
+      findsNothing,
+    );
   });
 }

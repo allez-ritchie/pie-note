@@ -22,6 +22,9 @@ class S {
   static const String back = '返回';
   static const String create = '新建';
   static const String loading = '加载中…';
+  static const String more = '更多';
+  static const String clear = '清空';
+  static const String clearFilter = '清空筛选';
 
   // 通用错误
   static const String networkErrorTitle = '无法连接后端';
@@ -39,6 +42,14 @@ class S {
 
   // 导航
   static const String tabNotebooks = '笔记本';
+  static const String tabSources = '来源';
+  static const String tabChat = '对话';
   static const String tabSearch = '搜索';
   static const String tabSettings = '设置';
+
+  // 来源 / 对话入口
+  static const String openSources = '查看来源';
+  static const String openChat = '与笔记本对话';
+  static const String sourceUnit = '个来源';
+  static const String tabSourcesTooltip = '来源：管理这个笔记本的链接、文件与文本';
 }

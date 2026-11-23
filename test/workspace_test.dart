@@ -214,6 +214,53 @@ void main() {
     expect(current().tabOf(other), isNotNull);
   });
 
+  test('来源标签页按 notebookId 复用：全部来源与具体笔记本是不同标签页', () {
+    final all = workspace.openSources(title: '全部来源');
+    final notebook = workspace.openSources(
+      notebookId: 'notebook:a',
+      title: '工作记录 · 来源',
+    );
+    final allAgain = workspace.openSources(title: '全部来源');
+    final notebookAgain = workspace.openSources(
+      notebookId: 'notebook:a',
+      title: '工作记录 · 来源',
+    );
+
+    expect(allAgain, all);
+    expect(notebookAgain, notebook);
+    expect(notebook, isNot(all));
+    expect(current().tabs, hasLength(2));
+    expect(current().activeId, notebook);
+  });
+
+  test('对话标签页按 notebookId 复用，且记录所属笔记本', () {
+    final a = workspace.openChat(notebookId: 'notebook:a', title: '与「A」对话');
+    final b = workspace.openChat(notebookId: 'notebook:b', title: '与「B」对话');
+    final aAgain = workspace.openChat(notebookId: 'notebook:a', title: '与「A」对话');
+
+    expect(aAgain, a);
+    expect(current().tabs, hasLength(2));
+    expect(current().activeId, a);
+    expect(current().tabs.first.parentId, 'notebook:a');
+    expect(current().tabs.last.kind, WorkspaceTabKind.chat);
+    expect(b, isNot(a));
+  });
+
+  test('关闭笔记本时只关闭它的来源 / 对话标签页', () {
+    final sourcesA = workspace.openSources(notebookId: 'notebook:a', title: 'A 来源');
+    final chatA = workspace.openChat(notebookId: 'notebook:a', title: '与「A」对话');
+    final sourcesB = workspace.openSources(notebookId: 'notebook:b', title: 'B 来源');
+    final notesA = workspace.openNotes(notebookId: 'notebook:a', title: 'A 笔记');
+
+    workspace.closeTabsForNotebook('notebook:a');
+
+    final ids = current().tabs.map((tab) => tab.id).toSet();
+    expect(ids, isNot(contains(sourcesA)));
+    expect(ids, isNot(contains(chatA)));
+    expect(ids, contains(sourcesB));
+    expect(ids, contains(notesA), reason: '笔记列表标签保留，由关闭入口单独处理');
+  });
+
   test('会话注册与注销用于关闭前的未保存确认', () {
     final id = workspace.openNote(noteId: 'note:1', title: '第一篇');
     final session = _FakeSession(dirty: true);

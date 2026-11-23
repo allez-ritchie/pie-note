@@ -139,6 +139,16 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
     }
   }
 
+  /// 打开笔记本的来源标签页（已打开则切过去）。
+  void _openSources(Notebook notebook) {
+    WorkspaceNavigator.openSourcesOf(ref, notebook);
+  }
+
+  /// 与笔记本对话（每个笔记本一个标签页）。
+  void _openChat(Notebook notebook) {
+    WorkspaceNavigator.openChat(ref, notebook);
+  }
+
   Future<void> _openNotebook(Notebook notebook) async {
     if (Responsive.useTwoPane(context)) {
       _selectNotebook(notebook.id, notebook.name);
@@ -250,6 +260,8 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                         onRename: () => _renameNotebook(notebook),
                         onToggleArchive: () => _toggleArchive(notebook),
                         onDelete: () => _deleteNotebook(notebook),
+                        onOpenSources: () => _openSources(notebook),
+                        onOpenChat: () => _openChat(notebook),
                       ),
                     ),
                   ),
@@ -270,6 +282,8 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                         onRename: () => _renameNotebook(notebook),
                         onToggleArchive: () => _toggleArchive(notebook),
                         onDelete: () => _deleteNotebook(notebook),
+                        onOpenSources: () => _openSources(notebook),
+                        onOpenChat: () => _openChat(notebook),
                       ),
                     ),
                   ),
@@ -462,6 +476,8 @@ class _NotebookTile extends StatelessWidget {
     required this.onRename,
     required this.onToggleArchive,
     required this.onDelete,
+    required this.onOpenSources,
+    required this.onOpenChat,
   });
 
   final Notebook notebook;
@@ -472,6 +488,8 @@ class _NotebookTile extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onToggleArchive;
   final VoidCallback onDelete;
+  final VoidCallback onOpenSources;
+  final VoidCallback onOpenChat;
 
   @override
   Widget build(BuildContext context) {
@@ -554,6 +572,13 @@ class _NotebookTile extends StatelessWidget {
                                 color: scheme.onSurfaceVariant,
                               ),
                         ),
+                        if (notebook.sourceCount > 0)
+                          Text(
+                            '  ·  ${notebook.sourceCount} ${S.sourceUnit}',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                          ),
                         if (updated != null) ...[
                           Text(
                             '  ·  ${Formatters.relativeTime(updated)}',
@@ -571,6 +596,10 @@ class _NotebookTile extends StatelessWidget {
                 tooltip: '更多',
                 onSelected: (value) {
                   switch (value) {
+                    case 'sources':
+                      onOpenSources();
+                    case 'chat':
+                      onOpenChat();
                     case 'rename':
                       onRename();
                     case 'archive':
@@ -580,6 +609,24 @@ class _NotebookTile extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'chat',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.forum_outlined),
+                      title: const Text(S.openChat),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'sources',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.travel_explore_rounded),
+                      title: const Text(S.openSources),
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'rename',
                     child: ListTile(

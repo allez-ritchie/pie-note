@@ -15,6 +15,10 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux/Windows 桌面�
   （上划自动隐藏、下划显示、点按停下不回显）；
 - **横竖屏 / 桌面窗口自适应**：手机竖屏单栏 + 悬浮工具栏，横屏与桌面窗口自动切侧边导航，
   宽窗口下笔记本与笔记并排、阅读视图左右分栏，编辑器支持 `Ctrl/Cmd + S` 保存；
+- **来源（Sources）**：为笔记本添加网页链接 / 本地文件 / 纯文本来源，
+  后端异步抽取正文、生成洞见与向量索引，客户端轮询处理状态并可查看正文与洞见；
+- **与笔记本对话**：基于来源与笔记构建上下文，把问题交给后端 LLM 回答；
+  支持多会话、上下文逐项勾选（不进 / 仅洞见 / 全文）、按会话选择模型、AI 回答一键存为笔记；
 - 图片链接暂不处理（预览中以占位符展示，不发起图片请求）。
 
 ## 功能
@@ -28,6 +32,8 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux/Windows 桌面�
 | 实时预览 | 渲染态直接编辑：点按段落就地展开该段源码，支持工具条、切到源码、点空白收起 |
 | 阅读预览 | 标题/代码块/表格/引用/列表渲染；`[[双链]]` 点击跳转；外链交给系统浏览器；任务复选框可勾选 |
 | 搜索 | 调用后端 `/api/search`，支持文本 / 语义检索、按笔记本限定范围、防抖搜索 |
+| 来源 | 列表 + 处理状态胶囊（自动轮询）、添加链接/文本/文件来源、正文与洞见详情、重命名/删除/失败重试、可选向量化 |
+| 对话 | 会话新建/切换/重命名/删除、上下文勾选与 token 预估、模型覆盖、Markdown 回答、复制 / 保存为笔记、失败可重试 |
 | 设置 | 后端连接信息与连通性测试、修改后端、主题（跟随系统/浅色/深色）、清除配置 |
 | 多标签 | 标签页状态集中在 `lib/state/workspace.dart`；同一篇笔记只会有一个标签页；关闭前统一确认未保存修改；标签页内容 `IndexedStack` 保活（草稿、滚动位置、搜索词都不丢） |
 | 响应式 | 断点驱动：侧边导航 + 顶部标签条（宽 ≥ 720）、列表双栏（宽 ≥ 840 且高 ≥ 480）、编辑器分栏（宽 ≥ 900 且高 ≥ 420）；窄屏为悬浮胶囊工具栏 + 标签总览 |
@@ -39,7 +45,7 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux/Windows 桌面�
 - `flutter_riverpod` 2.6 状态管理（`AsyncNotifier` / `AsyncValue` 三态）
 - `http` 网络请求，统一 Bearer 鉴权与错误映射
 - `flutter_secure_storage`（Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存地址与主题
-- `flutter_markdown_plus` 渲染 Markdown，`url_launcher` 打开外链
+- `flutter_markdown_plus` 渲染 Markdown，`url_launcher` 打开外链，`file_selector` 选择本地文件作为来源
 
 ## 后端 API 约定
 
@@ -50,6 +56,13 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux/Windows 桌面�
 - 笔记本：`GET/POST /api/notebooks`、`GET/PUT/DELETE /api/notebooks/{id}`。
 - 笔记：`GET /api/notes?notebook_id=...`、`GET/POST/PUT/DELETE /api/notes/{id}`。
 - 搜索：`POST /api/search`，返回 `{results, total_count, search_type}`，`results` 元素为宽松解析的 object。
+- 来源：`GET/POST /api/sources`（创建走 **multipart/form-data**）、`GET/DELETE /api/sources/{id}`、
+  `POST /api/sources/{id}/retry`、`GET /api/sources/{id}/status`（异步处理轮询）、
+  `GET /api/sources/{id}/insights`；`POST /api/notebooks/{nid}/sources/{sid}` 关联到笔记本。
+- 对话：`GET/POST /api/chat/sessions`、`GET/PUT/DELETE /api/chat/sessions/{id}`、
+  `POST /api/chat/context`（按 `context_config` 构建上下文）、`POST /api/chat/execute`
+  （同步返回完整消息列表）；`GET /api/models` / `/api/models/defaults` 提供模型选项。
+  **所有 LLM 调用都在后端完成**，客户端只透传 `model_override`（`model:<id>`）。
 
 完整约定与坑点（id 前缀、UTC 时间格式、可空字段等）见 [AGENTS.md](AGENTS.md)。
 
@@ -131,6 +144,8 @@ lib/
     ├── notebooks/           # 笔记本列表、笔记列表
     ├── notes/               # 编辑器三视图、实时预览、Markdown 预览/分块/任务勾选
     ├── search/              # 搜索
+    ├── sources/             # 来源：列表 / 添加（链接·文本·文件）/ 详情与洞见
+    ├── chat/                # 与笔记本对话：会话、上下文、模型、消息流
     ├── settings/            # 设置
     ├── common/              # 通用文案/组件/跳转/格式化
     └── theme/               # Material 3 主题
@@ -169,7 +184,10 @@ lib/
   不做 Obsidian 那种光标级、只揭示当前行标记的效果；
 - 不渲染 Markdown 图片（`![]()` 显示占位符，不加载、不上传）；
 - 不做离线缓存与冲突合并：后端是唯一数据源，后保存者覆盖先保存者；
-- 不接入后端的 AI/对话能力，只使用笔记 CRUD 与搜索接口。
+- 对话不是流式的：后端 `/api/chat/execute` 同步返回完整回答，等待期间只显示「AI 正在回答…」；
+- AI 能力全部由后端承担：本 App 不内置模型配置/密钥，模型选择只是把 `model:<id>`
+  透传给后端；后端未注册模型或额度不足时把错误原样展示（可重试）；
+- 来源的正文抽取、洞见生成、向量化都在后端异步执行，客户端只负责触发与轮询状态。
 
 ## 协作
 
