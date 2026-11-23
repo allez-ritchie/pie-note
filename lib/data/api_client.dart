@@ -181,21 +181,37 @@ String _normalizeFullWidth(String raw) {
 ///
 /// 所有请求统一走这里：注入 `Authorization: Bearer <password>`、超时控制、
 /// 错误映射。业务层不要自行拼装请求头或直接使用 `http`。
+/// 「未传该字段」与「显式传 null」不同的哨兵值（`PUT` 会话的 model_override）。
+const Object _unset = Object();
+
 class ApiClient {
   ApiClient({
     required String baseUrl,
     required String? password,
     http.Client? httpClient,
     Duration? timeout,
+    Duration? uploadTimeout,
+    Duration? longTimeout,
   })  : baseUrl = normalizeBaseUrl(baseUrl),
         _password = (password == null || password.isEmpty) ? null : password,
         _http = httpClient ?? http.Client(),
-        _timeout = timeout ?? const Duration(seconds: 20);
+        _timeout = timeout ?? const Duration(seconds: 20),
+        _uploadTimeout = uploadTimeout ?? const Duration(minutes: 5),
+        _longTimeout = longTimeout ?? const Duration(minutes: 5);
 
   final String baseUrl;
   final String? _password;
   final http.Client _http;
   final Duration _timeout;
+
+  /// 上传文件 / 后端同步抽取正文可能耗时几分钟，单独给更长的超时。
+  final Duration _uploadTimeout;
+
+  /// LLM 生成类请求（对话、上下文构建）的读超时。
+  ///
+  /// 后端 `/api/chat/execute` 是同步接口：模型回答完整生成后才返回，
+  /// 20 秒的默认超时几乎必然超时，这里给 5 分钟。
+  final Duration _longTimeout;
 
   bool get hasPassword => _password != null;
 
@@ -262,6 +278,69 @@ class ApiClient {
     } catch (_) {
       throw ApiException.network();
     }
+  }
+
+  /// 上传文件（multipart/form-data）。
+  ///
+  /// 与 [_send] 共用鉴权、错误映射与超时；`Content-Type` 不能手写 boundary，
+  /// 所以这里单独构造 [http.MultipartRequest]，只注入 `Accept` 与鉴权头。
+  Future<dynamic> _sendMultipart(
+    String path, {
+    required Map<String, String> fields,
+    String? filePath,
+    String? fileName,
+    Duration? timeout,
+  }) async {
+    final request = http.MultipartRequest('POST', _uri(path));
+    request.headers.addAll({
+      'Accept': 'application/json',
+      ..._authHeader(),
+    });
+    request.fields.addAll(fields);
+    if (filePath != null) {
+      try {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            filePath,
+            filename: fileName,
+          ).timeout(const Duration(seconds: 30)),
+        );
+      } on Object {
+        throw const ApiException('读取本地文件失败', kind: ApiErrorKind.badRequest);
+      }
+    }
+    try {
+      final streamed =
+          await _http.send(request).timeout(timeout ?? _uploadTimeout);
+      final response = await http.Response.fromStream(streamed);
+      final text = utf8.decode(response.bodyBytes, allowMalformed: true);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (text.trim().isEmpty) return null;
+        try {
+          return jsonDecode(text);
+        } catch (_) {
+          return text;
+        }
+      }
+      throw ApiException.fromStatus(response.statusCode, text);
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw ApiException.timeout();
+    } on SocketException {
+      throw ApiException.network();
+    } on http.ClientException {
+      throw ApiException.network();
+    } catch (_) {
+      throw ApiException.network();
+    }
+  }
+
+  Map<String, String> _authHeader({bool useAuth = true}) {
+    final password = _password;
+    if (!useAuth || password == null) return const <String, String>{};
+    return <String, String>{'Authorization': 'Bearer $password'};
   }
 
   Future<Map<String, dynamic>> _getObject(
@@ -443,6 +522,255 @@ class ApiClient {
         .map((json) => SearchHit.fromJson(Map<String, dynamic>.from(json)))
         .where((hit) => hit.hasNoteId)
         .toList(growable: false);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 来源（Source）
+  // ---------------------------------------------------------------------------
+
+  /// 来源列表；[notebookId] 为 null 时返回全部来源。
+  ///
+  /// 后端单页上限 100 条，这里按 [limit] 请求并把 `limit` 压到 1..100。
+  Future<List<Source>> fetchSources({
+    String? notebookId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final list = await _getList('/api/sources', query: {
+      if (notebookId != null && notebookId.isNotEmpty) 'notebook_id': notebookId,
+      'limit': limit.clamp(1, 100),
+      'offset': offset < 0 ? 0 : offset,
+      'sort_by': 'updated',
+      'sort_order': 'desc',
+    });
+    return list
+        .whereType<Map>()
+        .map((json) => Source.fromJson(Map<String, dynamic>.from(json)))
+        .where((source) => source.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<Source> fetchSource(String id) async {
+    final json = await _getObject('/api/sources/${Uri.encodeComponent(id)}');
+    return Source.fromJson(json);
+  }
+
+  /// 新建来源。
+  ///
+  /// 一律走 multipart 表单（与官方前端一致）：`/api/sources` 的入参由
+  /// FastAPI 的 `Form` + `File` 定义，`/api/sources/json` 只是兼容用的
+  /// legacy 端点，且拿不到文件上传能力，所以这里只用前者。
+  Future<Source> createSource(CreateSourceRequest request) async {
+    final fields = <String, String>{
+      'type': request.apiType,
+      if (request.title != null && request.title!.trim().isNotEmpty)
+        'title': request.title!.trim(),
+      if (request.url != null) 'url': request.url!,
+      if (request.content != null) 'content': request.content!,
+      if (request.notebookIds.isNotEmpty)
+        'notebooks': jsonEncode(request.notebookIds),
+      'embed': request.embed ? 'true' : 'false',
+      'delete_source': 'false',
+      'async_processing': request.asyncProcessing ? 'true' : 'false',
+    };
+    final data = await _sendMultipart(
+      '/api/sources',
+      fields: fields,
+      filePath: request.kind == SourceInputKind.upload ? request.filePath : null,
+      fileName: request.fileName,
+    );
+    return Source.fromJson(_asMap(data));
+  }
+
+  /// 来源处理状态（异步处理时轮询用）。
+  Future<SourceStatusInfo> fetchSourceStatus(String id) async {
+    final json = await _getObject('/api/sources/${Uri.encodeComponent(id)}/status');
+    return SourceStatusInfo.fromJson(json);
+  }
+
+  Future<void> deleteSource(String id) async {
+    await _send('DELETE', '/api/sources/${Uri.encodeComponent(id)}');
+  }
+
+  /// 重新处理一个失败 / 卡住的来源。
+  Future<Source> retrySource(String id) async {
+    final data = await _send('POST', '/api/sources/${Uri.encodeComponent(id)}/retry');
+    return Source.fromJson(_asMap(data));
+  }
+
+  Future<Source> updateSource(
+    String id, {
+    String? title,
+    List<String>? topics,
+  }) async {
+    final data = await _send('PUT', '/api/sources/${Uri.encodeComponent(id)}', body: {
+      if (title != null) 'title': title,
+      if (topics != null) 'topics': topics,
+    });
+    return Source.fromJson(_asMap(data));
+  }
+
+  /// 来源的「洞见」列表（transformation 生成的结构化摘要）。
+  Future<List<SourceInsight>> fetchSourceInsights(String id) async {
+    final list =
+        await _getList('/api/sources/${Uri.encodeComponent(id)}/insights');
+    return list
+        .whereType<Map>()
+        .map((json) => SourceInsight.fromJson(Map<String, dynamic>.from(json)))
+        .toList(growable: false);
+  }
+
+  /// 把已有来源加入笔记本（幂等）。
+  Future<void> addSourceToNotebook(String notebookId, String sourceId) async {
+    await _send(
+      'POST',
+      '/api/notebooks/${Uri.encodeComponent(notebookId)}'
+          '/sources/${Uri.encodeComponent(sourceId)}',
+    );
+  }
+
+  /// 从笔记本移除来源关联（不删除来源本身）。
+  Future<void> removeSourceFromNotebook(String notebookId, String sourceId) async {
+    await _send(
+      'DELETE',
+      '/api/notebooks/${Uri.encodeComponent(notebookId)}'
+          '/sources/${Uri.encodeComponent(sourceId)}',
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 对话（Chat）
+  // ---------------------------------------------------------------------------
+
+  /// 某个笔记本的对话会话列表。
+  Future<List<ChatSession>> fetchChatSessions(String notebookId) async {
+    final list = await _getList('/api/chat/sessions', query: {
+      'notebook_id': notebookId,
+    });
+    return list
+        .whereType<Map>()
+        .map((json) => ChatSession.fromJson(Map<String, dynamic>.from(json)))
+        .where((session) => session.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<ChatSession> createChatSession({
+    required String notebookId,
+    String? title,
+    String? modelOverride,
+  }) async {
+    final data = await _send('POST', '/api/chat/sessions', body: {
+      'notebook_id': notebookId,
+      if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+      if (modelOverride != null) 'model_override': modelOverride,
+    });
+    return ChatSession.fromJson(_asMap(data));
+  }
+
+  /// 会话详情（含消息列表）。
+  Future<({ChatSession session, List<ChatMessage> messages})> fetchChatSession(
+    String sessionId,
+  ) async {
+    final json =
+        await _getObject('/api/chat/sessions/${Uri.encodeComponent(sessionId)}');
+    final messages = json['messages'];
+    return (
+      session: ChatSession.fromJson(json),
+      messages: messages is List
+          ? messages
+              .whereType<Map>()
+              .map((item) => ChatMessage.fromJson(Map<String, dynamic>.from(item)))
+              .toList(growable: false)
+          : const <ChatMessage>[],
+    );
+  }
+
+  Future<ChatSession> updateChatSession(
+    String sessionId, {
+    String? title,
+    Object? modelOverride = _unset,
+  }) async {
+    final body = <String, dynamic>{};
+    if (title != null) body['title'] = title;
+    if (!identical(modelOverride, _unset)) body['model_override'] = modelOverride;
+    final data = await _send(
+      'PUT',
+      '/api/chat/sessions/${Uri.encodeComponent(sessionId)}',
+      body: body,
+    );
+    return ChatSession.fromJson(_asMap(data));
+  }
+
+  Future<void> deleteChatSession(String sessionId) async {
+    await _send('DELETE', '/api/chat/sessions/${Uri.encodeComponent(sessionId)}');
+  }
+
+  /// 构建对话上下文（由后端按 `context_config` 决定放哪些来源 / 笔记）。
+  Future<BuiltChatContext> buildChatContext({
+    required String notebookId,
+    required ChatContextSelection selection,
+  }) async {
+    final data = await _send(
+      'POST',
+      '/api/chat/context',
+      body: {
+        'notebook_id': notebookId,
+        'context_config': selection.toRequestConfig(),
+      },
+      timeout: _longTimeout,
+    );
+    return BuiltChatContext.fromJson(_asMap(data));
+  }
+
+  /// 执行一轮对话；后端同步返回**完整的消息列表**（不是增量）。
+  ///
+  /// [modelOverride] 为 `model:<id>` 时覆盖会话级 / 默认模型，null 表示用会话
+  /// 或后端默认（显式 null 会被 JSON 编码成 null，与「不传」语义不同，因此
+  /// 用 [includeModelOverride] 区分）。
+  Future<List<ChatMessage>> executeChat({
+    required String sessionId,
+    required String message,
+    required ChatContext context,
+    String? modelOverride,
+    bool includeModelOverride = false,
+  }) async {
+    final data = await _send(
+      'POST',
+      '/api/chat/execute',
+      body: {
+        'session_id': sessionId,
+        'message': message,
+        'context': context.toJson(),
+        if (includeModelOverride) 'model_override': modelOverride,
+      },
+      timeout: _longTimeout,
+    );
+    final map = _asMap(data);
+    final messages = map['messages'];
+    if (messages is! List) return const <ChatMessage>[];
+    return messages
+        .whereType<Map>()
+        .map((item) => ChatMessage.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 模型（对话的「模型覆盖」需要）
+  // ---------------------------------------------------------------------------
+
+  /// 服务端已注册的模型列表。
+  Future<List<LanguageModel>> fetchModels() async {
+    final list = await _getList('/api/models');
+    return list
+        .whereType<Map>()
+        .map((json) => LanguageModel.fromJson(Map<String, dynamic>.from(json)))
+        .toList(growable: false);
+  }
+
+  /// 服务端默认模型配置。
+  Future<ModelDefaults> fetchModelDefaults() async {
+    final json = await _getObject('/api/models/defaults');
+    return ModelDefaults.fromJson(json);
   }
 
   static Map<String, dynamic> _asMap(Object? data) {

@@ -22,6 +22,7 @@ dependencies:
   # Markdown 中的外链跳转浏览器（图片链接不处理）
   url_launcher: ^6.3.3
   cupertino_icons: ^1.0.9
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:

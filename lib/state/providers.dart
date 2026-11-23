@@ -95,6 +95,34 @@ NoteRepository _requireRepository(Ref ref) {
   return repository;
 }
 
+/// 来源仓库；未配置时为 null。
+final sourceRepositoryProvider = Provider<SourceRepository?>((ref) {
+  final client = ref.watch(apiClientProvider);
+  return client == null ? null : SourceRepository(client);
+});
+
+/// 对话仓库；未配置时为 null。
+final chatRepositoryProvider = Provider<ChatRepository?>((ref) {
+  final client = ref.watch(apiClientProvider);
+  return client == null ? null : ChatRepository(client);
+});
+
+SourceRepository _requireSourceRepository(Ref ref) {
+  final repository = ref.watch(sourceRepositoryProvider);
+  if (repository == null) {
+    throw const ApiException('尚未配置后端地址', kind: ApiErrorKind.badRequest);
+  }
+  return repository;
+}
+
+ChatRepository _requireChatRepository(Ref ref) {
+  final repository = ref.watch(chatRepositoryProvider);
+  if (repository == null) {
+    throw const ApiException('尚未配置后端地址', kind: ApiErrorKind.badRequest);
+  }
+  return repository;
+}
+
 /// 笔记本列表（默认按更新时间倒序）。
 final notebooksProvider = FutureProvider.autoDispose<List<Notebook>>((ref) async {
   return _requireRepository(ref).fetchNotebooks();
@@ -137,4 +165,42 @@ final serverConfigProvider = FutureProvider.autoDispose<ServerConfig>((ref) asyn
 /// 全部笔记（首页「全部笔记」入口用），与 [notesProvider] 共享缓存。
 final allNotesProvider = FutureProvider.autoDispose<List<Note>>((ref) async {
   return _requireRepository(ref).fetchNotes();
+});
+
+/// 某个笔记本下的来源列表；参数为 `null` 表示「全部来源」。
+final sourcesProvider =
+    FutureProvider.autoDispose.family<List<Source>, String?>((ref, notebookId) async {
+  return _requireSourceRepository(ref).fetchSources(notebookId: notebookId);
+});
+
+/// 单个来源详情（含正文，用于详情弹窗与对话上下文预览）。
+final sourceProvider =
+    FutureProvider.autoDispose.family<Source, String>((ref, sourceId) async {
+  return _requireSourceRepository(ref).fetchSource(sourceId);
+});
+
+/// 某个来源的洞见（transformation 生成的结构化摘要）。
+final sourceInsightsProvider =
+    FutureProvider.autoDispose.family<List<SourceInsight>, String>((ref, sourceId) async {
+  return _requireSourceRepository(ref).fetchInsights(sourceId);
+});
+
+/// 某个笔记本的对话会话列表。
+final chatSessionsProvider =
+    FutureProvider.autoDispose.family<List<ChatSession>, String>((ref, notebookId) async {
+  return _requireChatRepository(ref).fetchSessions(notebookId);
+});
+
+/// 对话会话详情（含消息列表）。
+final chatSessionProvider = FutureProvider.autoDispose
+    .family<({ChatSession session, List<ChatMessage> messages}), String>(
+  (ref, sessionId) async {
+    return _requireChatRepository(ref).fetchSession(sessionId);
+  },
+);
+
+/// 可选的对话模型与服务端默认模型（对话页「模型」下拉用）。
+final chatModelsProvider = FutureProvider.autoDispose<
+    ({List<LanguageModel> models, String? defaultChatModel})>((ref) async {
+  return _requireChatRepository(ref).fetchModels();
 });

@@ -153,3 +153,108 @@ class NoteRepository {
     return null;
   }
 }
+
+/// 来源相关调用的业务门面。
+///
+/// 单独抽一个仓库类是为了不把 `NoteRepository` 撑得更大，同时保持
+/// 「UI/provider 不直接依赖 [ApiClient]」的约定。
+class SourceRepository {
+  SourceRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<List<Source>> fetchSources({String? notebookId}) =>
+      _client.fetchSources(notebookId: notebookId);
+
+  Future<Source> fetchSource(String id) => _client.fetchSource(id);
+
+  Future<Source> createSource(CreateSourceRequest request) =>
+      _client.createSource(request);
+
+  Future<SourceStatusInfo> fetchStatus(String id) => _client.fetchSourceStatus(id);
+
+  Future<Source> retry(String id) => _client.retrySource(id);
+
+  Future<void> deleteSource(String id) => _client.deleteSource(id);
+
+  Future<List<SourceInsight>> fetchInsights(String id) =>
+      _client.fetchSourceInsights(id);
+
+  Future<Source> renameSource(String id, String title) =>
+      _client.updateSource(id, title: title);
+}
+
+/// 笔记本对话的业务门面（会话 + 上下文 + 一轮问答）。
+class ChatRepository {
+  ChatRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<List<ChatSession>> fetchSessions(String notebookId) =>
+      _client.fetchChatSessions(notebookId);
+
+  Future<ChatSession> createSession({
+    required String notebookId,
+    String? title,
+    String? modelOverride,
+  }) =>
+      _client.createChatSession(
+        notebookId: notebookId,
+        title: title,
+        modelOverride: modelOverride,
+      );
+
+  Future<({ChatSession session, List<ChatMessage> messages})> fetchSession(
+    String sessionId,
+  ) =>
+      _client.fetchChatSession(sessionId);
+
+  Future<ChatSession> renameSession(String sessionId, String title) =>
+      _client.updateChatSession(sessionId, title: title);
+
+  /// 设置 / 清除会话级模型覆盖（`null` 表示回到后端默认模型）。
+  Future<ChatSession> setSessionModel(String sessionId, String? modelId) =>
+      _client.updateChatSession(sessionId, modelOverride: modelId);
+
+  Future<void> deleteSession(String sessionId) =>
+      _client.deleteChatSession(sessionId);
+
+  Future<BuiltChatContext> buildContext({
+    required String notebookId,
+    required ChatContextSelection selection,
+  }) =>
+      _client.buildChatContext(notebookId: notebookId, selection: selection);
+
+  Future<List<ChatMessage>> execute({
+    required String sessionId,
+    required String message,
+    required ChatContext context,
+    String? modelOverride,
+    bool includeModelOverride = false,
+  }) =>
+      _client.executeChat(
+        sessionId: sessionId,
+        message: message,
+        context: context,
+        modelOverride: modelOverride,
+        includeModelOverride: includeModelOverride,
+      );
+
+  /// 服务端可用的对话模型 + 默认对话模型。
+  Future<({List<LanguageModel> models, String? defaultChatModel})> fetchModels() async {
+    final models = await _client.fetchModels();
+    String? defaultChatModel;
+    try {
+      defaultChatModel = (await _client.fetchModelDefaults()).defaultChatModel;
+    } on ApiException {
+      // 默认模型拿不到不影响选择列表，按「后端默认」展示即可。
+    }
+    return (
+      models: models
+          .where((model) => model.isLanguage)
+          .toList(growable: false)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+      defaultChatModel: defaultChatModel,
+    );
+  }
+}
