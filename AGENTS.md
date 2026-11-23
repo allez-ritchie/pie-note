@@ -17,8 +17,10 @@
 - 以 **Markdown** 作为笔记正文格式，编辑器提供**实时预览 / 源码 / 阅读**三视图
   （参考 Obsidian：默认实时预览，点按段落就地展开该段源码；阅读视图可直接勾选任务列表）；
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
-- **按可用宽高自适应横竖屏与桌面窗口**：窄屏底部导航 + 单栏二级页，宽屏侧边导航 +
+- **按可用宽高自适应横竖屏与桌面窗口**：窄屏单栏 + 底部悬浮胶囊工具栏，宽屏侧边导航 +
   「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
+- **多标签页工作区**：笔记本、搜索、设置与每篇笔记都是标签页；桌面端是 VSCode / Obsidian
+  桌面端风格的顶部标签条，移动端是 Obsidian 移动端风格的悬浮工具栏 + 多标签总览；
 - 同一套代码编译 **Android APK** 与 **Linux / Windows 桌面端**；
 - 密码只用于生成 `Authorization: Bearer <password>` 请求头，绝不明文落盘；
 - **暂不处理 Markdown 中的图片链接**（`![](...)` 按普通文本/占位显示，不做图片加载）。
@@ -90,7 +92,13 @@
 | `lib/data/config_store.dart` | 配置持久化：`baseUrl` 走 `shared_preferences`，`password` 走 `flutter_secure_storage`。 |
 | `lib/state/providers.dart` | Riverpod provider：配置状态、API 客户端、仓库、各列表页的 `AsyncNotifier`。 |
 | `lib/ui/setup/setup_screen.dart` | 首次启动配置页：Base URL + 密码 + 连接测试。 |
-| `lib/ui/home/home_shell.dart` | 主界面骨架（窄屏底部导航 / 宽屏侧边栏：笔记本 / 搜索 / 设置）。 |
+| `lib/ui/home/home_shell.dart` | 主界面入口，委托给 `workspace_shell.dart`。 |
+| `lib/ui/home/workspace_shell.dart` | 多标签工作区外壳：桌面「侧边导航 + 顶部标签条」/ 手机「页面铺满 + 底部悬浮胶囊工具栏」，标签页内容用 `IndexedStack` 保活。 |
+| `lib/ui/home/desktop_tab_strip.dart` | 桌面标签条：点击切换、`×` / 中键关闭、右键菜单（关闭其他 / 右侧 / 全部）、新建笔记。 |
+| `lib/ui/home/mobile_floating_bar.dart` | 移动端悬浮胶囊工具栏与显隐控制器（上划隐藏、下划显示、点按停下不回显）。 |
+| `lib/ui/home/mobile_tab_overview.dart` | 移动端「多标签总览」页：2 列卡片网格，切换 / 关闭 / 新建。 |
+| `lib/ui/home/workspace_navigator.dart` | 标签页统一打开入口（一级页面 / 笔记列表 / 笔记 / 草稿）。 |
+| `lib/state/workspace.dart` | 工作区状态：`WorkspaceTab` / `WorkspaceState` / `WorkspaceNotifier`（打开、激活、关闭、前进后退、会话绑定）。 |
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）。 |
 | `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
 | `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
@@ -168,9 +176,35 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
 
 | 断点 | 条件 | 行为 |
 | --- | --- | --- |
-| 侧边导航 | 宽 >= 720 | `NavigationRail` 替代底部 `NavigationBar` |
+| 侧边导航 + 标签条 | 宽 >= 720 | `NavigationRail` + 顶部标签条 |
 | 双栏列表 | 宽 >= 840 且高 >= 480 | 笔记本页左列表、右笔记，点击不跳页 |
 | 编辑器分栏 | 宽 >= 900 且高 >= 420 | 阅读视图左右分栏（渲染 + Markdown 源码） |
+
+多标签的形态同样只按宽度切换（不读 orientation）：
+
+| 宽度 | 形态 |
+| --- | --- |
+| 宽 >= 720（桌面 / 平板横屏 / 手机横屏） | `NavigationRail` + 顶部标签条（参考 VSCode / Obsidian 桌面端） |
+| 窄 < 720（手机竖屏、窄桌面窗口） | 页面铺满 + 底部悬浮胶囊工具栏（参考 Obsidian 移动端），标签总览为 2 列卡片页 |
+
+多标签约定（改这块代码前必读）：
+
+- **状态在 `lib/state/workspace.dart`**：页面不要自己 `Navigator.push` 编辑器，一律走
+  `WorkspaceNavigator`；同一条笔记已打开时切到原标签页，不重复创建。
+- **页面保活靠 `IndexedStack`**：编辑草稿、列表滚动位置、搜索词在切标签时都不丢。
+  标签页内容只在首次激活时才真正构建（`_visited`），避免一次打开多个编辑器并发拉正文。
+- **未保存拦截统一在工作区**：编辑页实现 `WorkspaceTabSession`（`isDirty` / `save` /
+  `discardChanges`），关闭标签页（× / `Ctrl+W` / 标签总览关闭）时由外壳弹一次确认。
+  编辑页**不要**在 `initState` / `dispose` 里写 provider 状态（会命中
+  「Tried to modify a provider while the widget tree was building」），会话注册放到
+  `addPostFrameCallback`，注销由 `WorkspaceNotifier.closeTab` 负责。
+- **桌面快捷键走 `HardwareKeyboard` 全局监听**：`Ctrl/Cmd + W` 关闭、`+T` 新建、
+  `+Tab` / `+Shift+Tab` 循环、`+1..9` 跳到第 N 个标签页。不要改用
+  `CallbackShortcuts`：切换标签后焦点可能留在离屏页面上，Focus 树里的快捷键会失效。
+- **移动端悬浮工具栏显隐只由滚动方向驱动**：`ScrollUpdateNotification.scrollDelta`
+  为正隐藏、为负显示，`ScrollEndNotification` 不改变状态 —— 这样在惯性滚动中点按屏幕
+  停下不会让工具栏回显。正文底部要给胶囊留出约 84 的空白（`_floatingBarInset`），
+  手机端也不要再放右下角 FAB（会与胶囊重叠），新建入口放到标题栏或胶囊的「+」。
 
 - 高度断点是必须的：手机横屏通常只有 400~450 高，只按宽度判定会把列表挤成两条细缝。
 - 宽窗口下页面内容用 `ContentFrame` 限宽居中，避免超长行；
@@ -227,11 +261,16 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    点「完成」或空白处收起并还原渲染；点任务复选框应立即勾选并标为「未保存」；
    保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱。
 6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
-   竖屏是底部导航 + 单栏、点进笔记本才进二级页；横屏（宽 >= 720）改为侧边导航，
-   宽 >= 840 且高 >= 480 时笔记本与笔记并排；编辑器在宽且高的窗口里阅读视图分栏。
-7. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
-   宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回底部导航 + 单栏；
-   编辑器 `Ctrl+S` 保存成功并提示（Windows 上底部导航/双栏断点与 Linux 完全一致，
+   竖屏是页面铺满 + 底部悬浮胶囊工具栏 + 单栏，点进笔记本打开新的笔记列表标签页；
+   横屏（宽 >= 720）改为侧边导航 + 顶部标签条，宽 >= 840 且高 >= 480 时笔记本与笔记并排；
+   编辑器在宽且高的窗口里阅读视图分栏。
+7. 多标签验证点：桌面点笔记开新标签、再次点击已有笔记只切换；`Ctrl/Cmd + W` 关闭、
+   `+T` 新建、`+Tab` 循环、`+1..9` 跳转；关闭未保存标签会弹「保存并关闭 / 不保存 / 取消」；
+   手机端点胶囊的标签图标进入 2 列卡片总览，可切换 / 关闭 / 新建；
+   长笔记上划时胶囊自动隐藏，惯性滚动中点按屏幕停下**不应**回显，下划才显示。
+8. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
+   宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回悬浮工具栏 + 单栏；
+   编辑器 `Ctrl+S` 保存成功并提示（Windows 上悬浮工具栏/双栏断点与 Linux 完全一致，
    因为两边都只读 Flutter 的可用宽高）。
 
 ---

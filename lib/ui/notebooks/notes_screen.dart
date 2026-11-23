@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
+import '../../state/workspace.dart';
 import '../common/formatters.dart';
 import '../common/layout.dart';
 import '../common/navigation.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
+import '../home/workspace_navigator.dart';
 import 'notes_strings.dart';
 
 enum _NoteSort {
@@ -27,6 +29,7 @@ class NotesScreen extends ConsumerStatefulWidget {
     this.notebookId,
     this.showBackButton = true,
     this.padded = false,
+    this.embedded = false,
   });
 
   final String title;
@@ -37,6 +40,9 @@ class NotesScreen extends ConsumerStatefulWidget {
 
   /// 是否限制内容最大宽度并居中（桌面宽窗口可读性更好）。
   final bool padded;
+
+  /// 是否作为工作区标签页嵌入：打开笔记 / 新建笔记改为操作标签页。
+  final bool embedded;
 
   @override
   ConsumerState<NotesScreen> createState() => _NotesScreenState();
@@ -67,11 +73,25 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
   }
 
   Future<void> _openNote(Note note) async {
+    if (widget.embedded) {
+      // 已打开的笔记会切到原标签页；列表在切回本页时自动刷新（见 build）。
+      WorkspaceNavigator.openNote(
+        ref,
+        noteId: note.id,
+        title: note.displayTitle,
+        notebookId: widget.notebookId,
+      );
+      return;
+    }
     final changed = await AppNavigator.openEditor(context, noteId: note.id);
     if (changed == true) _invalidateLists();
   }
 
   Future<void> _createNote() async {
+    if (widget.embedded) {
+      WorkspaceNavigator.openDraft(ref, notebookId: widget.notebookId);
+      return;
+    }
     final changed = await AppNavigator.openEditor(
       context,
       notebookId: widget.notebookId,
@@ -146,6 +166,12 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 从笔记标签页切回列表时刷新一次：编辑 / 删除可能已改变标题与更新时间。
+    ref.listen<WorkspaceState>(workspaceProvider, (previous, next) {
+      if (previous?.activeId == next.activeId) return;
+      if (next.activeTab?.kind != WorkspaceTabKind.notes) return;
+      _invalidateLists();
+    });
     final notesAsync = ref.watch(notesProvider(widget.notebookId));
     return Scaffold(
       appBar: AppBar(
@@ -179,11 +205,14 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createNote,
-        icon: const Icon(Icons.edit_rounded),
-        label: const Text(NotesStrings.create),
-      ),
+      // 手机端由底部悬浮工具栏的「+」承担新建；桌面端保留右下角按钮。
+      floatingActionButton: Responsive.useSideNavigation(context)
+          ? FloatingActionButton.extended(
+              onPressed: _createNote,
+              icon: const Icon(Icons.edit_rounded),
+              label: const Text(NotesStrings.create),
+            )
+          : null,
       body: notesAsync.when(
         loading: () => const AppLoadingView(message: S.loading),
         error: (error, _) => AppErrorView(
@@ -241,7 +270,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
                         )
                       : ListView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
                           itemCount: visible.length,
                           itemBuilder: (context, index) {
                             final note = visible[index];

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/providers.dart';
+import '../../state/workspace.dart';
 import '../common/navigation.dart';
+import '../home/workspace_navigator.dart';
 import 'editor_strings.dart';
 
 /// Markdown 预览。
@@ -89,7 +91,16 @@ class MarkdownView extends ConsumerWidget {
           );
           return;
         }
-        await AppNavigator.openEditor(context, noteId: note.id);
+        // 在多标签工作区里打开为标签页；独立路由（例如单元测试）保持原行为。
+        if (ref.read(workspaceProvider).hasTabs) {
+          WorkspaceNavigator.openNote(
+            ref,
+            noteId: note.id,
+            title: note.displayTitle,
+          );
+        } else {
+          await AppNavigator.openEditor(context, noteId: note.id);
+        }
       } catch (error) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(

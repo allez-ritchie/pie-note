@@ -6,9 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/api_client.dart';
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
-import '../common/navigation.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
+import '../home/workspace_navigator.dart';
 import 'search_strings.dart';
 
 /// 全文 / 语义搜索页。
@@ -76,10 +76,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     setState(() => _query = '');
   }
 
-  /// 打开命中笔记；编辑后内容有变更时失效当前搜索，让结果刷新。
-  Future<void> _openHit(SearchQuery query, SearchHit hit) async {
-    final changed = await AppNavigator.openEditor(context, noteId: hit.noteId);
-    if (!mounted || changed != true) return;
+  /// 打开命中笔记：作为新标签页（已打开则切过去）。
+  void _openHit(SearchQuery query, SearchHit hit) {
+    WorkspaceNavigator.openNote(
+      ref,
+      noteId: hit.noteId,
+      title: hit.title ?? SearchStrings.unnamedNote,
+    );
+    // 编辑后回到本页时刷新结果，避免展示已过期的正文。
     ref.invalidate(searchProvider(query));
   }
 

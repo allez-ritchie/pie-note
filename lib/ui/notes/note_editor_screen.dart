@@ -4,10 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
+import '../../state/workspace.dart';
 import '../common/formatters.dart';
 import '../common/layout.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
+import '../home/workspace_strings.dart';
 import 'editor_strings.dart';
 import 'live_preview_editor.dart';
 import 'markdown_blocks.dart';
@@ -24,6 +26,12 @@ enum _LeaveAction { save, discard, cancel }
 enum EditorViewMode { live, source, reading }
 
 /// 笔记编辑器：编辑 / 预览双模式，新建与编辑共用。
+///
+/// 两种使用方式：
+/// - **标签页**（默认）：由工作区外壳以 `tabId` + [WorkspaceTabBinding] 嵌入，
+///   标题、未保存标记与摘要同步到标签条，关闭前的未保存确认由工作区统一处理；
+/// - **独立路由**：不传 [WorkspaceTabBinding] 时保持旧行为，用 `Navigator.pop`
+///   返回「内容是否有变更」。
 class NoteEditorScreen extends ConsumerStatefulWidget {
   const NoteEditorScreen({
     super.key,
@@ -31,6 +39,8 @@ class NoteEditorScreen extends ConsumerStatefulWidget {
     this.notebookId,
     this.initialTitle,
     this.initialContent,
+    this.tabId,
+    this.binding,
   });
 
   /// 为空表示新建笔记。
@@ -42,11 +52,20 @@ class NoteEditorScreen extends ConsumerStatefulWidget {
   final String? initialTitle;
   final String? initialContent;
 
+  /// 所在标签页 id；独立路由时为 null。
+  final String? tabId;
+
+  /// 与工作区标签页的双向绑定；为 null 表示独立路由。
+  final WorkspaceTabBinding? binding;
+
+  bool get embedded => binding != null;
+
   @override
   ConsumerState<NoteEditorScreen> createState() => _NoteEditorScreenState();
 }
 
-class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
+class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
+    implements WorkspaceTabSession {
   late final TextEditingController _titleController;
   late final TextEditingController _contentController;
   final FocusNode _contentFocus = FocusNode();
@@ -73,13 +92,50 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _baselineContent = _contentController.text;
     _titleController.addListener(_recomputeDirty);
     _contentController.addListener(_recomputeDirty);
+    _titleController.addListener(_publishTitle);
+    // 标签页绑定会写 Riverpod 状态，不能在 initState（构建期）同步做，
+    // 否则会命中「Tried to modify a provider while the widget tree was building」。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.binding?.onSessionChanged?.call(this);
+      _publishTitle();
+    });
     if (_noteId != null) {
       _loadRemoteNote();
     }
   }
 
   @override
+  bool get isDirty => _dirty;
+
+  /// 工作区关闭标签页前调用；保存失败时页面自行提示并返回 false。
+  @override
+  Future<bool> save() => _save();
+
+  /// 关闭标签页 / 删除笔记时丢弃草稿（页面随后被销毁）。
+  @override
+  void discardChanges() {
+    _titleController.text = _baselineTitle;
+    _contentController.text = _baselineContent;
+    _dirty = false;
+  }
+
+  /// 标签条标题：标题输入框优先，为空时用正文首行兜底。
+  ///
+  /// 两者都为空（新建草稿刚打开）时不改标题，保留「新建笔记」这样的初始文案。
+  void _publishTitle() {
+    final title = _titleController.text.trim();
+    final fallback = _contentController.text
+        .split('\n')
+        .map((line) => line.trim())
+        .firstWhere((line) => line.isNotEmpty, orElse: () => '');
+    if (title.isEmpty && fallback.isEmpty) return;
+    widget.binding?.onTitleChanged?.call(title.isEmpty ? fallback : title);
+  }
+
+  @override
   void dispose() {
+    // 会话注销由工作区在 closeTab 时完成：dispose 阶段不能改 provider 状态。
     _titleController.dispose();
     _contentController.dispose();
     _contentFocus.dispose();
@@ -91,6 +147,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         _contentController.text != _baselineContent;
     if (dirty != _dirty) {
       setState(() => _dirty = dirty);
+      widget.binding?.onDirtyChanged?.call(dirty);
     }
   }
 
@@ -117,6 +174,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         _loadingRemote = false;
         _dirty = false;
       });
+      _publishTitle();
+      widget.binding?.onDirtyChanged?.call(false);
+      widget.binding?.onPreviewChanged?.call(Note.snippetOf(note.content));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -164,6 +224,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       _baselineContent = _contentController.text;
       _lastSavedAt = saved.updated ?? DateTime.now();
       _changed = true;
+      if (widget.binding != null) {
+        // 新建笔记首次保存：把草稿标签页绑定到真实笔记 id。
+        widget.binding!.onNoteSaved?.call(saved.id);
+        widget.binding!.onPreviewChanged?.call(Note.snippetOf(content));
+        _publishTitle();
+      }
       // 列表与容器信息都可能变化。
       ref.invalidate(allNotesProvider);
       ref.invalidate(notebooksProvider);
@@ -175,6 +241,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         _saving = false;
         _dirty = false;
       });
+      widget.binding?.onDirtyChanged?.call(false);
       _showSnack(EditorStrings.savedToast);
       return true;
     } catch (error) {
@@ -208,7 +275,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       }
       if (!mounted) return;
       _showSnack(EditorStrings.deletedToast);
-      _pop(_changed);
+      if (widget.embedded) {
+        // 笔记已删除：标签页无需再确认，直接关闭。
+        widget.binding!.onClosed?.call();
+      } else {
+        _pop(_changed);
+      }
     } catch (error) {
       _showSnack(describeError(error));
     }
@@ -241,8 +313,15 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   }
 
   /// 统一退出逻辑：处理未保存修改后带结果返回。
+  ///
+  /// 嵌入标签页时把关闭交给工作区：桌面标签条、快捷键、移动端标签总览
+  /// 都走同一套未保存确认，行为保持一致。
   Future<void> _handleBack() async {
     if (_saving) return;
+    if (widget.embedded) {
+      widget.binding!.onRequestClose?.call();
+      return;
+    }
     if (_dirty) {
       final action = await _confirmLeave();
       if (action == _LeaveAction.cancel) return;
@@ -320,9 +399,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         },
         child: Scaffold(
         appBar: AppBar(
+          // 标签页里没有「返回」，用关闭标签页替代；独立路由保留返回按钮。
           leading: IconButton(
-            tooltip: S.back,
-            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: widget.embedded ? WorkspaceStrings.closeTab : S.back,
+            icon: Icon(
+              widget.embedded ? Icons.close_rounded : Icons.arrow_back_rounded,
+            ),
             onPressed: _handleBack,
           ),
           title: Text(

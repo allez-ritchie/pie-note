@@ -9,7 +9,9 @@ import 'package:pie_note/data/api_client.dart';
 import 'package:pie_note/data/config_store.dart';
 import 'package:pie_note/state/providers.dart';
 import 'package:pie_note/ui/common/layout.dart';
+import 'package:pie_note/ui/home/desktop_tab_strip.dart';
 import 'package:pie_note/ui/home/home_shell.dart';
+import 'package:pie_note/ui/home/mobile_floating_bar.dart';
 import 'package:pie_note/ui/notebooks/notebooks_screen.dart';
 import 'package:pie_note/ui/notebooks/notes_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -109,24 +111,29 @@ Future<void> _pumpAtSize(
 }
 
 void main() {
-  testWidgets('竖屏窄窗口用底部导航，且笔记本页只有单栏', (tester) async {
+  testWidgets('竖屏窄窗口用底部悬浮工具栏，且笔记本页只有单栏', (tester) async {
     final store = await _configuredStore();
     await _pumpAtSize(tester, const Size(420, 880), const HomeShell(), store: store);
 
-    expect(find.byType(NavigationBar), findsOneWidget);
+    // 移动端是 Obsidian 风格的悬浮胶囊工具栏，而不是 NavigationBar。
+    expect(find.byType(MobileFloatingBar), findsOneWidget);
+    expect(find.byType(DesktopTabStrip), findsNothing);
+    expect(find.byType(NavigationBar), findsNothing);
     expect(find.byType(NavigationRail), findsNothing);
 
-    // 单栏：不内嵌笔记列表，点笔记本才进入二级页。
+    // 单栏：不内嵌笔记列表，点笔记本才打开笔记列表标签页。
     expect(find.byType(NotesScreen), findsNothing);
     expect(find.byType(NotebooksScreen), findsOneWidget);
   });
 
-  testWidgets('横屏/桌面宽窗口用侧边导航，笔记本页自动双栏', (tester) async {
+  testWidgets('横屏/桌面宽窗口用侧边导航 + 顶部标签条，笔记本页自动双栏', (tester) async {
     final store = await _configuredStore();
     await _pumpAtSize(tester, const Size(1280, 800), const HomeShell(), store: store);
 
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
+    expect(find.byType(DesktopTabStrip), findsOneWidget);
+    expect(find.byType(MobileFloatingBar), findsNothing);
 
     // 双栏：右侧直接内嵌「全部笔记」列表，无需跳转。
     expect(find.byType(NotesScreen), findsOneWidget);

@@ -5,9 +5,9 @@ import '../../data/api_models.dart';
 import '../../state/providers.dart';
 import '../common/formatters.dart';
 import '../common/layout.dart';
-import '../common/navigation.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
+import '../home/workspace_navigator.dart';
 import 'notebooks_strings.dart';
 import 'notes_screen.dart';
 
@@ -144,8 +144,9 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
       _selectNotebook(notebook.id, notebook.name);
       return;
     }
-    await AppNavigator.openNotes(
-      context,
+    // 宽屏以外：笔记列表作为新标签页打开（已打开则切过去）。
+    WorkspaceNavigator.openNotes(
+      ref,
       title: notebook.name,
       notebookId: notebook.id,
     );
@@ -161,6 +162,14 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
       appBar: AppBar(
         title: const Text(NotebooksStrings.title),
         actions: [
+          // 手机端没有右下角悬浮按钮（会与底部胶囊工具栏重叠），
+          // 把「新建笔记本」入口放到标题栏。
+          if (!twoPane && !Responsive.useSideNavigation(context))
+            IconButton(
+              tooltip: NotebooksStrings.create,
+              onPressed: _createNotebook,
+              icon: const Icon(Icons.create_new_folder_rounded),
+            ),
           IconButton(
             tooltip: S.refresh,
             onPressed: () => ref.invalidate(notebooksProvider),
@@ -180,8 +189,9 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
           ),
         ],
       ),
-      // 双栏时「新建笔记本」按钮放进左栏，避免盖住右侧笔记列表自己的按钮。
-      floatingActionButton: twoPane
+      // 双栏时「新建笔记本」按钮放进左栏；手机端没有右下角按钮
+      // （会与底部悬浮胶囊工具栏重叠），入口移到标题栏。
+      floatingActionButton: twoPane || !Responsive.useSideNavigation(context)
           ? null
           : FloatingActionButton.extended(
               onPressed: _createNotebook,
@@ -214,8 +224,8 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                     if (twoPane) {
                       _selectNotebook(null, NotebooksStrings.allNotes);
                     } else {
-                      AppNavigator.openNotes(
-                        context,
+                      WorkspaceNavigator.openNotes(
+                        ref,
                         title: NotebooksStrings.allNotes,
                       );
                     }
@@ -301,6 +311,8 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                   notebookId: _selectedNotebookId,
                   padded: true,
                   showBackButton: false,
+                  // 双栏内嵌的笔记列表同样用工作区打开笔记（新标签页）。
+                  embedded: true,
                 ),
               ),
             ],
