@@ -23,6 +23,10 @@ keystore.properties
 *.apk
 *.aab
 
+# 桌面端（Linux）本地依赖缓存，由 scripts/setup_linux_deps.sh 生成
+.desktop-deps/
+dist/
+
 # IDE
 .idea/
 .vscode/

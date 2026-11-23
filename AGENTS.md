@@ -7,9 +7,9 @@
 
 ## 1. 仓库作用
 
-本仓库是 **PieNote** 的 Android 客户端源码。PieNote 是一个类似 Obsidian 的
+本仓库是 **PieNote** 的客户端源码（**Android + Linux 桌面**）。PieNote 是一个类似 Obsidian 的
 **Markdown 笔记 App**，它本身不存储笔记业务数据，而是作为**离线部署的
-[Open Notebook](https://github.com/lfnovo/open-notebook) 服务端的移动端编辑器/浏览器**：
+[Open Notebook](https://github.com/lfnovo/open-notebook) 服务端的编辑器/浏览器**：
 
 - 后端是局域网/内网自建的 Open Notebook（默认 `http://<host>:5055`），
   App 通过其 REST API 读写**笔记本（notebook）与笔记（note）**；
@@ -17,12 +17,15 @@
 - 以 **Markdown** 作为笔记正文格式，编辑器提供**实时预览 / 源码 / 阅读**三视图
   （参考 Obsidian：默认实时预览，点按段落就地展开该段源码；阅读视图可直接勾选任务列表）；
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
+- **按可用宽高自适应横竖屏与桌面窗口**：窄屏底部导航 + 单栏二级页，宽屏侧边导航 +
+  「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
+- 同一套代码编译 **Android APK** 与 **Linux 桌面端**；
 - 密码只用于生成 `Authorization: Bearer <password>` 请求头，绝不明文落盘；
 - **暂不处理 Markdown 中的图片链接**（`![](...)` 按普通文本/占位显示，不做图片加载）。
 
 技术栈：Flutter（Dart 3.x）+ Material 3，`http` 负责网络，`flutter_secure_storage`
-（Android Keystore）保存密码，`shared_preferences` 保存 Base URL 等非敏感配置，
-状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`。
+（Android Keystore / Linux 系统密钥环）保存密码，`shared_preferences` 保存 Base URL
+等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`。
 
 > 本 App 的定位是**客户端**：不做离线笔记同步/冲突合并，不做本地数据库镜像。
 > 打开笔记时从后端拉取最新内容，保存时直接 `PUT` 回后端。
@@ -87,9 +90,9 @@
 | `lib/data/config_store.dart` | 配置持久化：`baseUrl` 走 `shared_preferences`，`password` 走 `flutter_secure_storage`。 |
 | `lib/state/providers.dart` | Riverpod provider：配置状态、API 客户端、仓库、各列表页的 `AsyncNotifier`。 |
 | `lib/ui/setup/setup_screen.dart` | 首次启动配置页：Base URL + 密码 + 连接测试。 |
-| `lib/ui/home/home_shell.dart` | 主界面骨架（底部导航：笔记本 / 最近 / 搜索 / 设置）。 |
-| `lib/ui/notebooks/` | 笔记本列表与笔记列表页。 |
-| `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存、删除、未保存拦截。 |
+| `lib/ui/home/home_shell.dart` | 主界面骨架（窄屏底部导航 / 宽屏侧边栏：笔记本 / 搜索 / 设置）。 |
+| `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）。 |
+| `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
 | `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
@@ -97,9 +100,11 @@
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
 | `lib/ui/settings/settings_screen.dart` | 后端地址、密码、连接测试、退出配置。 |
-| `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）。 |
+| `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）、响应式断点 `layout.dart`、平台判定 `app_platform.dart`。 |
 | `lib/ui/theme/` | Material 3 主题（浅色/深色、动态取色）。 |
-| `test/` | JVM/Dart 单元测试（模型解析、URL 归一化、鉴权头、错误映射）。 |
+| `linux/` | Linux 桌面端工程（Flutter 生成，窗口标题/默认尺寸在 `runner/my_application.cc`）。 |
+| `scripts/setup_linux_deps.sh` | 桌面端构建依赖准备（libsecret 开发文件 / clang 链接器 shim）。 |
+| `test/` | JVM/Dart 单元测试（模型解析、URL 归一化、鉴权头、错误映射、响应式断点）。 |
 
 **共享文件**（见 5.1）之外的模块文案集中在 `lib/ui/common/` 与各页自身；界面文案统一走
 `lib/ui/common/strings.dart`，禁止在各页面里散落硬编码文案。
@@ -109,7 +114,9 @@
 ## 4. 构建、测试与验证
 
 环境要求：Flutter 3.4x（Dart 3.11+）、Android SDK 36、JDK 21、`ANDROID_HOME` 已配置。
-本机 Flutter 位于 `/home/rt/Android/flutter`。常用命令：
+本机 Flutter 位于 `/home/rt/Android/flutter`。
+桌面端另需：`clang`、`cmake`、`ninja`、`pkg-config`、GTK3 开发包、`libsecret-1-dev`（见 4.2）。
+常用命令：
 
 ```bash
 # 拉取依赖
@@ -123,6 +130,10 @@ flutter test
 
 # 打包 Debug APK（产物 build/app/outputs/flutter-apk/app-debug.apk）
 flutter build apk --debug
+
+# 打包 Linux 桌面端（产物 build/linux/x64/release/bundle/pie_note）
+eval "$(scripts/setup_linux_deps.sh --print-env)"
+flutter build linux --release
 ```
 
 补充说明：
@@ -138,7 +149,39 @@ flutter build apk --debug
 - Android 9+ 默认禁止明文 HTTP，且模拟器访问宿主机需要 `10.0.2.2` 或 `adb reverse`；
   调试网络相关改动时优先用 `adb reverse tcp:5055 tcp:5055` 把后端映射进模拟器。
 
-### 4.1 手工/模拟器端到端验证
+### 4.1 响应式布局（横竖屏 / 桌面）约定
+
+页面**不读 `MediaQuery.orientation`**，一律按可用宽高分支（`lib/ui/common/layout.dart`）：
+
+| 断点 | 条件 | 行为 |
+| --- | --- | --- |
+| 侧边导航 | 宽 >= 720 | `NavigationRail` 替代底部 `NavigationBar` |
+| 双栏列表 | 宽 >= 840 且高 >= 480 | 笔记本页左列表、右笔记，点击不跳页 |
+| 编辑器分栏 | 宽 >= 900 且高 >= 420 | 阅读视图左右分栏（渲染 + Markdown 源码） |
+
+- 高度断点是必须的：手机横屏通常只有 400~450 高，只按宽度判定会把列表挤成两条细缝。
+- 宽窗口下页面内容用 `ContentFrame` 限宽居中，避免超长行；
+- 桌面快捷键：编辑器内 `Ctrl/Cmd + S` 保存（`CallbackShortcuts`），保存按钮 tooltip 随平台显示 `Ctrl` / `⌘`。
+- 新增页面时请复用 `Responsive` / `ContentFrame`，不要再写魔法数字。
+
+### 4.2 Linux 桌面端构建
+
+- 工程目录 `linux/`（`flutter create --platforms=linux` 生成，已纳入版本管理）。
+- 密码存储走 `flutter_secure_storage` 的 Linux 实现，**编译期**需要 `libsecret-1` 的
+  开发文件、**运行期**需要系统密钥环（Secret Service）：
+  - Debian/Ubuntu：`sudo apt install libsecret-1-dev`（Fedora：`libsecret-devel`；Arch：`libsecret`）；
+  - 没有 root 时执行 `scripts/setup_linux_deps.sh --local`：把 .deb 里的头文件 / `.pc` /
+    `.so` 链接解到 `.desktop-deps/`（已忽略），不改动系统目录。
+- 该脚本同时会生成 `.desktop-deps/toolchain`（`clang++` 包装脚本 + `ld`/`llvm-ar` 软链）：
+  Flutter 的 native assets 编译会用 `clang++` 所在目录找链接器，Ubuntu 的 clang-18 默认
+  **不带 lld**，不补这一步 `flutter build linux` 会报
+  `Failed to find any of [ld.lld, ld] in LocalDirectory: '/usr/lib/llvm-18/bin'`。
+- 构建前统一：`eval "$(scripts/setup_linux_deps.sh --print-env)"`（会 export
+  `PKG_CONFIG_PATH` / `LIBRARY_PATH` / `PATH`）。
+- 桌面端没有可用的系统密钥环时，保存配置会失败并提示「无法写入系统密钥环（libsecret）」，
+  **不会**退化成明文存储（见 `SecretStorageException`）。
+
+### 4.3 手工/模拟器端到端验证
 
 1. 确认本机后端可用：`curl -s http://127.0.0.1:5055/health` 返回 `{"status":"healthy"}`；
    取密码：`docker exec open-notebook printenv OPEN_NOTEBOOK_PASSWORD`。
@@ -154,6 +197,11 @@ flutter build apk --debug
    点按某一段落，仅该段展开为源码输入框（其余仍渲染），工具条可插入 Markdown；
    点「完成」或空白处收起并还原渲染；点任务复选框应立即勾选并标为「未保存」；
    保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱。
+6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
+   竖屏是底部导航 + 单栏、点进笔记本才进二级页；横屏（宽 >= 720）改为侧边导航，
+   宽 >= 840 且高 >= 480 时笔记本与笔记并排；编辑器在宽且高的窗口里阅读视图分栏。
+7. 桌面端验证点：`flutter build linux --release` 产物可直接运行；宽窗口下双栏/侧边栏生效，
+   把窗口拖窄到 420 附近自动退回底部导航 + 单栏；编辑器 `Ctrl+S` 保存成功并提示。
 
 ---
 
@@ -256,8 +304,10 @@ build(android): 放行局域网明文 HTTP 后端地址
 
 - 所有请求必须经 `data/api_client.dart`，统一处理 Base URL 归一化（补 `http://`、
   去尾部 `/`）、`Authorization: Bearer` 头、超时（连接/读取分开设置）与错误映射。
-- 密码**只能**存放在 `flutter_secure_storage`（Android Keystore 加密），
+- 密码**只能**存放在 `flutter_secure_storage`（Android Keystore / Linux 系统密钥环），
   不得写入 `shared_preferences`、日志、异常消息、UI 明文展示（输入框用 `obscureText`）。
+- 安全存储写入失败必须**报错并中止保存**（`ConfigStore.save` 抛 `SecretStorageException`），
+  不允许为了「能存就行」降级成明文；`ConfigStore.save` 先写密码再写 Base URL。
 - 日志/错误提示中**禁止**输出密码与完整请求头；`ApiException` 只保留状态码与后端 `detail`。
 - 自建后端多为 HTTP 明文：仅通过 `network_security_config.xml` 按需放行，
   不要图省事全局 `usesCleartextTraffic="true"`（`usersCleartextTrafficPermitted` 需保留说明）。
@@ -287,6 +337,8 @@ build(android): 放行局域网明文 HTTP 后端地址
 ### 7.4 依赖与构建
 
 - 新增依赖必须先在 `pubspec.yaml` 里明确版本，并在本文件第 1 节技术栈中登记用途。
+- 平台相关文案（「Android Keystore」「手机」等）不要硬编码在页面里，统一走
+  `lib/ui/common/app_platform.dart`（`AppPlatform.secretStorageName` / `deviceNoun` / `shortcutKeyLabel`）。
 - 不引入重量级本地数据库/同步框架；本 App 无本地笔记存储，后端是唯一数据源。
 - `android/app/src/debug/` 下的测试辅助代码不得影响 release 构建。
 
@@ -299,3 +351,5 @@ build(android): 放行局域网明文 HTTP 后端地址
 - **不做冲突合并**：同一笔记被多处同时修改时，后保存的覆盖先保存的。
 - **不做 AI 能力**：后端虽有 `/api/search/ask` 等 LLM 端点，
   但本 App 只用到搜索/笔记 CRUD，不接入模型配置与对话。
+- **桌面端只做 Linux**：当前只生成 `linux/` 平台工程；Windows/macOS 需要
+  在对应系统上 `flutter create --platforms=windows,macos .` 后各自验证，不在本仓库承诺。

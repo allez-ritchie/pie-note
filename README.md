@@ -1,6 +1,6 @@
 # PieNote
 
-PieNote 是一个 **Android 端的 Markdown 笔记客户端**，界面与交互参考 Obsidian，
+PieNote 是一个 **Markdown 笔记客户端**（Android + Linux 桌面），界面与交互参考 Obsidian，
 数据完全来自你**离线部署的 [Open Notebook](https://github.com/lfnovo/open-notebook)** 后端。
 
 - 首次启动填写后端 Base URL（如 `http://192.168.31.24:5055`）与访问密码，通过校验后即可使用；
@@ -9,6 +9,8 @@ PieNote 是一个 **Android 端的 Markdown 笔记客户端**，界面与交互�
   点按任意段落就地展开该段 Markdown 源码编辑（参考 Obsidian Live Preview）；
 - 任务列表 `- [ ]` 在实时预览与阅读视图中可直接点击勾选，立即改写正文；
 - Markdown 快捷工具条、`[[双链]]` 跳转与未保存拦截；
+- **横竖屏 / 桌面窗口自适应**：手机竖屏单栏 + 底部导航，横屏与桌面窗口自动切侧边导航，
+  宽窗口下笔记本与笔记并排、阅读视图左右分栏，编辑器支持 `Ctrl/Cmd + S` 保存；
 - 图片链接暂不处理（预览中以占位符展示，不发起图片请求）。
 
 ## 功能
@@ -23,13 +25,15 @@ PieNote 是一个 **Android 端的 Markdown 笔记客户端**，界面与交互�
 | 阅读预览 | 标题/代码块/表格/引用/列表渲染；`[[双链]]` 点击跳转；外链交给系统浏览器；任务复选框可勾选 |
 | 搜索 | 调用后端 `/api/search`，支持文本 / 语义检索、按笔记本限定范围、防抖搜索 |
 | 设置 | 后端连接信息与连通性测试、修改后端、主题（跟随系统/浅色/深色）、清除配置 |
+| 响应式 | 断点驱动：侧边导航（宽 ≥ 720）、列表双栏（宽 ≥ 840 且高 ≥ 480）、编辑器分栏（宽 ≥ 900 且高 ≥ 420） |
+| 桌面端 | Linux 原生窗口（默认 1180×820、最小 420×560），同一套 Flutter 代码 |
 
 ## 技术栈
 
 - Flutter（Dart 3.11+）/ Material 3
 - `flutter_riverpod` 2.6 状态管理（`AsyncNotifier` / `AsyncValue` 三态）
 - `http` 网络请求，统一 Bearer 鉴权与错误映射
-- `flutter_secure_storage`（Android Keystore）保存密码，`shared_preferences` 保存地址与主题
+- `flutter_secure_storage`（Android Keystore / Linux 系统密钥环）保存密码，`shared_preferences` 保存地址与主题
 - `flutter_markdown_plus` 渲染 Markdown，`url_launcher` 打开外链
 
 ## 后端 API 约定
@@ -46,7 +50,9 @@ PieNote 是一个 **Android 端的 Markdown 笔记客户端**，界面与交互�
 
 ## 构建与运行
 
-环境：Flutter 3.4x、Android SDK 36、JDK 21。
+环境：Flutter 3.4x、Android SDK 36、JDK 21；桌面端另需 clang / cmake / ninja / GTK3 / libsecret-1-dev。
+
+### Android
 
 ```bash
 flutter pub get
@@ -67,6 +73,26 @@ adb reverse tcp:5055 tcp:5055
 App 内填写 Base URL（模拟器可用 `http://127.0.0.1:5055`，局域网真机用 `http://<后端IP>:5055`）
 和密码 `docker exec open-notebook printenv OPEN_NOTEBOOK_PASSWORD`，点击「测试连接」→「保存并进入」。
 
+### Linux 桌面端
+
+编译期需要 `libsecret-1` 的开发文件（运行期用系统密钥环保存密码）：
+
+```bash
+# 有 root：sudo apt install libsecret-1-dev（Fedora: libsecret-devel / Arch: libsecret）
+# 无 root：自动解包到 .desktop-deps/（已忽略，不改动系统目录）
+scripts/setup_linux_deps.sh --local
+
+eval "$(scripts/setup_linux_deps.sh --print-env)"
+flutter build linux --release
+# 产物：build/linux/x64/release/bundle/pie_note（整个 bundle/ 目录可直接分发）
+./build/linux/x64/release/bundle/pie_note
+```
+
+- `setup_linux_deps.sh` 还会生成 clang 工具链 shim：Flutter 的 native assets 编译要求
+  `clang++` 同目录下有 `ld.lld` / `ld`，Ubuntu 的 clang-18 默认不带 lld，不补会直接构建失败。
+- 桌面端若没有运行中的 Secret Service（如精简的窗口管理器/远程会话），保存配置会提示
+  「无法写入系统密钥环（libsecret）」并保持未保存状态，**不会**把密码写到明文存储。
+
 ## 目录结构
 
 ```
@@ -85,6 +111,20 @@ lib/
     ├── common/              # 通用文案/组件/跳转/格式化
     └── theme/               # Material 3 主题
 ```
+
+## 响应式与桌面端
+
+页面不读 `MediaQuery.orientation`，一律按可用**宽高**分支（`lib/ui/common/layout.dart`）：
+
+| 断点 | 条件 | 行为 |
+| --- | --- | --- |
+| 侧边导航 | 宽 ≥ 720 | `NavigationRail` 替代底部导航 |
+| 列表双栏 | 宽 ≥ 840 且高 ≥ 480 | 笔记本（左）+ 笔记（右），点击不跳页 |
+| 编辑器分栏 | 宽 ≥ 900 且高 ≥ 420 | 阅读视图左右分栏：渲染 + Markdown 源码 |
+
+高度断点是必须的：手机横屏通常只有 400~450 高，只按宽度判断会把列表挤成两条细缝。
+宽窗口下正文用 `ContentFrame` 限宽居中；密码存储位置、快捷键等平台差异文案走
+`lib/ui/common/app_platform.dart`。
 
 ## 已知边界
 
