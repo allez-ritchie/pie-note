@@ -1,3 +1,5 @@
+import '../common/app_platform.dart';
+
 /// 设置页文案。
 ///
 /// 约定：页面里禁止硬编码用户可见文案，统一收敛到这里；
@@ -47,7 +49,8 @@ class SettingsStrings {
   static const String aboutAppName = '应用';
   static const String aboutVersion = '版本';
   static const String aboutBackend = '后端';
-  static const String backendDescription = 'PieNote 是自建 Open Notebook 的移动端客户端，笔记数据保存在后端。';
+  static const String backendDescription =
+      'PieNote 是自建 Open Notebook 的 Markdown 客户端（手机 / 桌面），笔记数据保存在后端。';
   static const String aboutApi = '当前 API 地址';
   static const String imageNotice = 'Markdown 图片链接（![](...)）暂不渲染，会按普通文本显示。';
 
@@ -56,8 +59,9 @@ class SettingsStrings {
   // ---------------------------------------------------------------------------
   static const String sectionNetwork = '网络说明';
   static const String networkTitle = '局域网 HTTP 明文已放行';
-  static const String networkBody1 =
-      '为连接局域网内自建的 Open Notebook，App 通过 network_security_config 显式放行 HTTP 明文请求。';
+  static String get networkBody1 => AppPlatform.isDesktop
+      ? '为连接局域网内自建的 Open Notebook，桌面端直接使用系统网络栈发起 HTTP 明文请求（桌面端没有 Android 的 network_security_config 限制）。'
+      : '为连接局域网内自建的 Open Notebook，App 通过 network_security_config 显式放行 HTTP 明文请求。';
   static const String networkBody2 =
       '明文传输不加密，请仅在可信局域网内使用，不要在公共 Wi-Fi 下输入访问密码。';
   static const String networkBody3 = '如果后端已启用 HTTPS，请把后端地址改为以 https:// 开头。';

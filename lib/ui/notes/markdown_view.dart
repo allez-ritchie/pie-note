@@ -22,6 +22,7 @@ class MarkdownView extends ConsumerWidget {
     this.onTapText,
     this.onToggleTask,
     this.taskStartIndex = 0,
+    this.selectable = false,
   });
 
   final String content;
@@ -35,6 +36,12 @@ class MarkdownView extends ConsumerWidget {
   /// 本段内容之前已有多少任务项，用于把局部序号换算成全篇序号。
   final int taskStartIndex;
 
+  /// 是否允许选中文本。
+  ///
+  /// 桌面端在「阅读」视图里常要复制正文；而实时预览的渲染态需要点按段落
+  /// 进入编辑，开启选中会与点击手势冲突，因此只在阅读视图显式开启。
+  final bool selectable;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -43,7 +50,7 @@ class MarkdownView extends ConsumerWidget {
     var localTaskIndex = 0;
     return MarkdownBody(
       data: transformWikiLinks(content),
-      selectable: true,
+      selectable: selectable,
       styleSheet: styleSheet,
       onTapText: onTapText,
       onTapLink: (text, href, title) => _handleLink(context, ref, href),

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
 import '../common/formatters.dart';
+import '../common/layout.dart';
 import '../common/navigation.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
@@ -16,11 +17,26 @@ enum _NoteSort {
 }
 
 /// 某个笔记本下的笔记列表；[notebookId] 为 null 表示全部笔记。
+///
+/// 窄屏作为二级页面推入（带返回键）；宽屏由 [NotebooksScreen] 的双栏布局
+/// 直接嵌在右侧，此时用 [showBackButton] 去掉返回键、用 [padded] 收敛内容宽度。
 class NotesScreen extends ConsumerStatefulWidget {
-  const NotesScreen({super.key, required this.title, this.notebookId});
+  const NotesScreen({
+    super.key,
+    required this.title,
+    this.notebookId,
+    this.showBackButton = true,
+    this.padded = false,
+  });
 
   final String title;
   final String? notebookId;
+
+  /// 是否显示返回按钮（双栏内嵌时为 false）。
+  final bool showBackButton;
+
+  /// 是否限制内容最大宽度并居中（桌面宽窗口可读性更好）。
+  final bool padded;
 
   @override
   ConsumerState<NotesScreen> createState() => _NotesScreenState();
@@ -133,6 +149,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
     final notesAsync = ref.watch(notesProvider(widget.notebookId));
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: widget.showBackButton,
         title: Text(widget.title),
         actions: [
           PopupMenuButton<_NoteSort>(
@@ -177,7 +194,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
         data: (notes) {
           final visible = _visibleNotes(notes);
           final contentIndex = _contentIndex(notes);
-          return Column(
+          final content = Column(
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
@@ -244,6 +261,8 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
               ),
             ],
           );
+          if (!widget.padded) return content;
+          return ContentFrame(maxWidth: 860, child: content);
         },
       ),
     );

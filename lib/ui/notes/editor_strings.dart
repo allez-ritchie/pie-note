@@ -1,11 +1,17 @@
+import '../common/app_platform.dart';
+
 /// 笔记编辑页文案。
 class EditorStrings {
   const EditorStrings._();
 
   static const String newNote = '新建笔记';
+  static const String editTitle = '编辑笔记';
   static const String titleHint = '标题';
   static const String contentHint = '开始书写 Markdown…';
   static const String save = '保存';
+
+  /// 保存按钮的提示文案（快捷键随平台显示 Ctrl 或 ⌘）。
+  static String get saveShortcut => '保存（${AppPlatform.shortcutKeyLabel}+S）';
   static const String saving = '保存中…';
   static const String savedToast = '笔记已保存';
   static const String saveFailed = '保存失败';
@@ -20,6 +26,10 @@ class EditorStrings {
   static const String loadErrorTitle = '笔记加载失败';
   static const String untitled = '无标题笔记';
   static const String savedAt = '上次保存';
+  static const String unsavedBadge = '未保存';
+
+  /// 字数统计。
+  static String charCount(int count) => '$count 字';
   static const String neverSaved = '尚未保存';
   static const String emptyPreview = '（内容为空，切回编辑模式开始书写）';
 
@@ -33,6 +43,7 @@ class EditorStrings {
   static const String liveDone = '完成';
   static const String startWriting = '开始书写';
   static const String liveSourceToggle = '切到源码';
+  static const String paneSource = 'MARKDOWN 源码';
   static const String taskDone = '已完成';
   static const String taskTodo = '未完成';
 

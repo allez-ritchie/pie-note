@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
 import '../common/formatters.dart';
+import '../common/layout.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import 'editor_strings.dart';
@@ -310,14 +312,22 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         if (didPop) return;
         _handleBack();
       },
-      child: Scaffold(
+      child: CallbackShortcuts(
+        // 桌面端习惯：Ctrl/Cmd + S 保存（回车仍由输入框自己处理）。
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _save,
+        },
+        child: Scaffold(
         appBar: AppBar(
           leading: IconButton(
             tooltip: S.back,
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: _handleBack,
           ),
-          title: Text(_noteId == null ? EditorStrings.newNote : '编辑笔记'),
+          title: Text(
+            _noteId == null ? EditorStrings.newNote : EditorStrings.editTitle,
+          ),
           actions: [
             PopupMenuButton<EditorViewMode>(
               tooltip: EditorStrings.switchMode,
@@ -364,7 +374,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
               isLabelVisible: _dirty,
               smallSize: 8,
               child: IconButton(
-                tooltip: EditorStrings.save,
+                tooltip: EditorStrings.saveShortcut,
                 onPressed: _saving ? null : _save,
                 icon: _saving
                     ? const SizedBox(
@@ -396,7 +406,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             const SizedBox(width: 4),
           ],
         ),
-        body: _buildBody(scheme),
+        // 桌面/横屏宽窗口里给正文限宽并居中，避免超长行难以阅读。
+        body: ContentFrame(maxWidth: 1100, child: _buildBody(scheme)),
+        ),
       ),
     );
   }
@@ -450,7 +462,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '未保存',
+                  EditorStrings.unsavedBadge,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: scheme.primary,
                       ),
@@ -469,7 +481,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
               ListenableBuilder(
                 listenable: _contentController,
                 builder: (context, _) => Text(
-                  '${_contentController.text.length} 字',
+                  EditorStrings.charCount(_contentController.text.length),
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -483,7 +495,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           child: switch (_viewMode) {
             EditorViewMode.live => _buildLivePreview(),
             EditorViewMode.source => _buildEditor(scheme),
-            EditorViewMode.reading => _buildPreview(),
+            EditorViewMode.reading =>
+              _splitPane ? _buildReadingSplit() : _buildPreview(),
           },
         ),
         if (_viewMode == EditorViewMode.source)
@@ -565,6 +578,58 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     );
   }
 
+  /// 宽屏下实时预览 / 阅读视图右侧并排一栏（桌面端左右对照更顺手）。
+  bool get _splitPane => Responsive.useEditorSplit(context);
+
+  /// 阅读视图 + 右侧「原始 Markdown」只读对照。
+  Widget _buildReadingSplit() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 6, child: _buildPreview()),
+        const VerticalDivider(width: 1),
+        Expanded(
+          flex: 5,
+          child: _buildPane(
+            EditorStrings.paneSource,
+            SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+              child: SelectableText(
+                _contentController.text,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 13.5,
+                  height: 1.65,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 分栏的一栏：顶部小标题 + 内容。
+  Widget _buildPane(String title, Widget child) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  letterSpacing: 0.6,
+                ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+
   Widget _buildPreview() {
     final content = _contentController.text;
     if (content.trim().isEmpty) {
@@ -583,7 +648,11 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-      child: MarkdownView(content: content, onToggleTask: _toggleTask),
+      child: MarkdownView(
+        content: content,
+        onToggleTask: _toggleTask,
+        selectable: true,
+      ),
     );
   }
 }

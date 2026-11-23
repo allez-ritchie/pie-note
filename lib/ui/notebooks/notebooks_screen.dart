@@ -4,12 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/api_models.dart';
 import '../../state/providers.dart';
 import '../common/formatters.dart';
+import '../common/layout.dart';
 import '../common/navigation.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import 'notebooks_strings.dart';
+import 'notes_screen.dart';
 
 /// 笔记本列表（一级页面）。
+///
+/// 宽屏（手机横屏 / 平板 / 桌面窗口）下自动变为「左笔记本、右笔记」双栏：
+/// 选中笔记本后右侧直接展示笔记列表，不再用二级页面跳转。
 class NotebooksScreen extends ConsumerStatefulWidget {
   const NotebooksScreen({super.key});
 
@@ -19,6 +24,32 @@ class NotebooksScreen extends ConsumerStatefulWidget {
 
 class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
   bool _showArchived = false;
+
+  /// 双栏布局下右侧选中的笔记本；`null` 表示「全部笔记」。
+  String? _selectedNotebookId;
+  String _selectedTitle = NotebooksStrings.allNotes;
+
+  void _selectNotebook(String? id, String title) {
+    if (id == _selectedNotebookId) return;
+    setState(() {
+      _selectedNotebookId = id;
+      _selectedTitle = title;
+    });
+  }
+
+  /// 选中的笔记本被删除或列表刷新后不存在时，回退到「全部笔记」。
+  void _syncSelection(List<Notebook> notebooks) {
+    final selected = _selectedNotebookId;
+    if (selected == null) return;
+    if (notebooks.any((notebook) => notebook.id == selected)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedNotebookId != selected) return;
+      setState(() {
+        _selectedNotebookId = null;
+        _selectedTitle = NotebooksStrings.allNotes;
+      });
+    });
+  }
 
   Future<void> _refresh() async {
     ref.invalidate(notebooksProvider);
@@ -99,6 +130,9 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
       await repository.deleteNotebook(notebook.id);
       ref.invalidate(notebooksProvider);
       ref.invalidate(allNotesProvider);
+      if (_selectedNotebookId == notebook.id) {
+        setState(() => _selectedNotebookId = null);
+      }
       _showSnack(NotebooksStrings.deletedToast);
     } catch (error) {
       _showSnack(describeError(error));
@@ -106,6 +140,10 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
   }
 
   Future<void> _openNotebook(Notebook notebook) async {
+    if (Responsive.useTwoPane(context)) {
+      _selectNotebook(notebook.id, notebook.name);
+      return;
+    }
     await AppNavigator.openNotes(
       context,
       title: notebook.name,
@@ -118,6 +156,7 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
   @override
   Widget build(BuildContext context) {
     final notebooksAsync = ref.watch(notebooksProvider);
+    final twoPane = Responsive.useTwoPane(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text(NotebooksStrings.title),
@@ -141,11 +180,14 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createNotebook,
-        icon: const Icon(Icons.create_new_folder_rounded),
-        label: const Text(NotebooksStrings.create),
-      ),
+      // 双栏时「新建笔记本」按钮放进左栏，避免盖住右侧笔记列表自己的按钮。
+      floatingActionButton: twoPane
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _createNotebook,
+              icon: const Icon(Icons.create_new_folder_rounded),
+              label: const Text(NotebooksStrings.create),
+            ),
       body: notebooksAsync.when(
         loading: () => const AppLoadingView(message: S.loading),
         error: (error, _) => AppErrorView(
@@ -154,17 +196,31 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
           onRetry: () => ref.invalidate(notebooksProvider),
         ),
         data: (notebooks) {
+          _syncSelection(notebooks);
           final active = notebooks.where((n) => !n.archived).toList(growable: false);
           final archived = notebooks.where((n) => n.archived).toList(growable: false);
           final totalNotes =
               notebooks.fold<int>(0, (sum, notebook) => sum + notebook.noteCount);
-          return RefreshIndicator(
+          final list = RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
               children: [
-                _AllNotesCard(totalNotes: totalNotes),
+                _AllNotesCard(
+                  totalNotes: totalNotes,
+                  selected: twoPane && _selectedNotebookId == null,
+                  onSelect: () {
+                    if (twoPane) {
+                      _selectNotebook(null, NotebooksStrings.allNotes);
+                    } else {
+                      AppNavigator.openNotes(
+                        context,
+                        title: NotebooksStrings.allNotes,
+                      );
+                    }
+                  },
+                ),
                 const SizedBox(height: 20),
                 _SectionHeader(
                   title: NotebooksStrings.title,
@@ -179,6 +235,7 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                       padding: const EdgeInsets.only(bottom: 10),
                       child: _NotebookTile(
                         notebook: notebook,
+                        selected: _selectedNotebookId == notebook.id,
                         onTap: () => _openNotebook(notebook),
                         onRename: () => _renameNotebook(notebook),
                         onToggleArchive: () => _toggleArchive(notebook),
@@ -198,6 +255,7 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                       padding: const EdgeInsets.only(bottom: 10),
                       child: _NotebookTile(
                         notebook: notebook,
+                        selected: _selectedNotebookId == notebook.id,
                         onTap: () => _openNotebook(notebook),
                         onRename: () => _renameNotebook(notebook),
                         onToggleArchive: () => _toggleArchive(notebook),
@@ -209,6 +267,44 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
               ],
             ),
           );
+          // 单栏时（手机竖屏 / 横屏）也收敛内容宽度，横屏下不会把卡片拉得过宽。
+          if (!twoPane) return ContentFrame(maxWidth: 780, child: list);
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                // 左栏随窗口弹性变化：窄窗口 300、宽窗口最多 420。
+                width: (MediaQuery.sizeOf(context).width * 0.32)
+                    .clamp(300.0, 420.0),
+                child: Stack(
+                  children: [
+                    Positioned.fill(child: list),
+                    Positioned(
+                      right: 16,
+                      bottom: 16,
+                      child: FloatingActionButton.extended(
+                        heroTag: null,
+                        onPressed: _createNotebook,
+                        icon: const Icon(Icons.create_new_folder_rounded),
+                        label: const Text(NotebooksStrings.create),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: NotesScreen(
+                  // 切换笔记本时重建，避免沿用上一条笔记的滚动位置与筛选词。
+                  key: ValueKey<String?>(_selectedNotebookId),
+                  title: _selectedTitle,
+                  notebookId: _selectedNotebookId,
+                  padded: true,
+                  showBackButton: false,
+                ),
+              ),
+            ],
+          );
         },
       ),
     );
@@ -216,22 +312,37 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
 }
 
 class _AllNotesCard extends StatelessWidget {
-  const _AllNotesCard({required this.totalNotes});
+  const _AllNotesCard({
+    required this.totalNotes,
+    required this.selected,
+    required this.onSelect,
+  });
 
   final int totalNotes;
+
+  /// 双栏布局下是否正在展示「全部笔记」。
+  final bool selected;
+
+  /// 点击行为：双栏切右侧内容，单栏推入笔记列表页。
+  final VoidCallback onSelect;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: selected
+              ? scheme.primary
+              : scheme.outlineVariant.withValues(alpha: 0.5),
+          width: selected ? 1.6 : 1,
+        ),
+      ),
+      color: selected ? scheme.primaryContainer.withValues(alpha: 0.35) : null,
       child: InkWell(
-        onTap: () async {
-          await AppNavigator.openNotes(
-            context,
-            title: NotebooksStrings.allNotes,
-          );
-        },
+        onTap: onSelect,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
           child: Row(
@@ -329,6 +440,7 @@ class _SectionHeader extends StatelessWidget {
 class _NotebookTile extends StatelessWidget {
   const _NotebookTile({
     required this.notebook,
+    required this.selected,
     required this.onTap,
     required this.onRename,
     required this.onToggleArchive,
@@ -336,6 +448,9 @@ class _NotebookTile extends StatelessWidget {
   });
 
   final Notebook notebook;
+
+  /// 双栏布局下是否是右侧正在展示的笔记本。
+  final bool selected;
   final VoidCallback onTap;
   final VoidCallback onRename;
   final VoidCallback onToggleArchive;
@@ -347,6 +462,16 @@ class _NotebookTile extends StatelessWidget {
     final updated = notebook.updated;
     return Card(
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: selected
+              ? scheme.primary
+              : scheme.outlineVariant.withValues(alpha: 0.5),
+          width: selected ? 1.6 : 1,
+        ),
+      ),
+      color: selected ? scheme.primaryContainer.withValues(alpha: 0.28) : null,
       child: InkWell(
         onTap: onTap,
         child: Padding(
