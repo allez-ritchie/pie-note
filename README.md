@@ -1,6 +1,6 @@
 # PieNote
 
-PieNote 是一个 **Markdown 笔记客户端**（Android + Linux 桌面），界面与交互参考 Obsidian，
+PieNote 是一个 **Markdown 笔记客户端**（Android + Linux/Windows 桌面），界面与交互参考 Obsidian，
 数据完全来自你**离线部署的 [Open Notebook](https://github.com/lfnovo/open-notebook)** 后端。
 
 - 首次启动填写后端 Base URL（如 `http://192.168.31.24:5055`）与访问密码，通过校验后即可使用；
@@ -26,14 +26,14 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux 桌面），界
 | 搜索 | 调用后端 `/api/search`，支持文本 / 语义检索、按笔记本限定范围、防抖搜索 |
 | 设置 | 后端连接信息与连通性测试、修改后端、主题（跟随系统/浅色/深色）、清除配置 |
 | 响应式 | 断点驱动：侧边导航（宽 ≥ 720）、列表双栏（宽 ≥ 840 且高 ≥ 480）、编辑器分栏（宽 ≥ 900 且高 ≥ 420） |
-| 桌面端 | Linux 原生窗口（默认 1180×820、最小 420×560），同一套 Flutter 代码 |
+| 桌面端 | Linux / Windows 原生窗口（默认 1180×820、最小 420×560），同一套 Flutter 代码 |
 
 ## 技术栈
 
 - Flutter（Dart 3.11+）/ Material 3
 - `flutter_riverpod` 2.6 状态管理（`AsyncNotifier` / `AsyncValue` 三态）
 - `http` 网络请求，统一 Bearer 鉴权与错误映射
-- `flutter_secure_storage`（Android Keystore / Linux 系统密钥环）保存密码，`shared_preferences` 保存地址与主题
+- `flutter_secure_storage`（Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存地址与主题
 - `flutter_markdown_plus` 渲染 Markdown，`url_launcher` 打开外链
 
 ## 后端 API 约定
@@ -50,7 +50,9 @@ PieNote 是一个 **Markdown 笔记客户端**（Android + Linux 桌面），界
 
 ## 构建与运行
 
-环境：Flutter 3.4x、Android SDK 36、JDK 21；桌面端另需 clang / cmake / ninja / GTK3 / libsecret-1-dev。
+环境：Flutter 3.4x、Android SDK 36、JDK 21；
+Linux 桌面端另需 clang / cmake / ninja / GTK3 / libsecret-1-dev，Windows 桌面端需 Visual Studio 2022
+的「使用 C++ 的桌面开发」工作负载（MSVC + Windows SDK）。
 
 ### Android
 
@@ -92,6 +94,23 @@ flutter build linux --release
   `clang++` 同目录下有 `ld.lld` / `ld`，Ubuntu 的 clang-18 默认不带 lld，不补会直接构建失败。
 - 桌面端若没有运行中的 Secret Service（如精简的窗口管理器/远程会话），保存配置会提示
   「无法写入系统密钥环（libsecret）」并保持未保存状态，**不会**把密码写到明文存储。
+
+### Windows 桌面端
+
+需要 Visual Studio 2022 的「使用 C++ 的桌面开发」工作负载（MSVC v143 + Windows 10/11 SDK），
+`flutter doctor -v` 里 Visual Studio 一项为 ✓ 即可；密码走系统凭据管理器，无需额外开发包。
+
+```powershell
+pwsh -File scripts/build_windows.ps1              # release 构建
+pwsh -File scripts/build_windows.ps1 -DebugBuild   # debug 构建
+pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-windows-x64-<mode>.zip
+# 产物：build/windows/x64/runner/Release/pie_note.exe
+# 分发时要连同同目录的 data/、flutter_windows.dll 与各插件 dll 一起打包
+```
+
+- 窗口标题 `PieNote`、默认 1180×820、最小 420×560，与 Linux 端保持一致；
+- runner 的 C++ 源码含中文注释，`windows/runner/CMakeLists.txt` 里的 `/utf-8` 编译选项不能删，
+  否则 MSVC 在中文代码页下会因 C4819 被 `/WX` 拦成编译错误。
 
 ## 目录结构
 

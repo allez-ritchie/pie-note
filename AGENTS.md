@@ -7,7 +7,7 @@
 
 ## 1. 仓库作用
 
-本仓库是 **PieNote** 的客户端源码（**Android + Linux 桌面**）。PieNote 是一个类似 Obsidian 的
+本仓库是 **PieNote** 的客户端源码（**Android + Linux/Windows 桌面**）。PieNote 是一个类似 Obsidian 的
 **Markdown 笔记 App**，它本身不存储笔记业务数据，而是作为**离线部署的
 [Open Notebook](https://github.com/lfnovo/open-notebook) 服务端的编辑器/浏览器**：
 
@@ -19,12 +19,12 @@
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
 - **按可用宽高自适应横竖屏与桌面窗口**：窄屏底部导航 + 单栏二级页，宽屏侧边导航 +
   「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
-- 同一套代码编译 **Android APK** 与 **Linux 桌面端**；
+- 同一套代码编译 **Android APK** 与 **Linux / Windows 桌面端**；
 - 密码只用于生成 `Authorization: Bearer <password>` 请求头，绝不明文落盘；
 - **暂不处理 Markdown 中的图片链接**（`![](...)` 按普通文本/占位显示，不做图片加载）。
 
 技术栈：Flutter（Dart 3.x）+ Material 3，`http` 负责网络，`flutter_secure_storage`
-（Android Keystore / Linux 系统密钥环）保存密码，`shared_preferences` 保存 Base URL
+（Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存 Base URL
 等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`。
 
 > 本 App 的定位是**客户端**：不做离线笔记同步/冲突合并，不做本地数据库镜像。
@@ -103,7 +103,9 @@
 | `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）、响应式断点 `layout.dart`、平台判定 `app_platform.dart`。 |
 | `lib/ui/theme/` | Material 3 主题（浅色/深色、动态取色）。 |
 | `linux/` | Linux 桌面端工程（Flutter 生成，窗口标题/默认尺寸在 `runner/my_application.cc`）。 |
-| `scripts/setup_linux_deps.sh` | 桌面端构建依赖准备（libsecret 开发文件 / clang 链接器 shim）。 |
+| `windows/` | Windows 桌面端工程（Flutter 生成，窗口标题/默认尺寸/最小尺寸在 `runner/main.cpp` 与 `runner/win32_window.*`）。 |
+| `scripts/setup_linux_deps.sh` | Linux 桌面端构建依赖准备（libsecret 开发文件 / clang 链接器 shim）。 |
+| `scripts/build_linux.sh` / `scripts/build_windows.ps1` | 桌面端一键构建脚本（依赖准备 → 构建 → 打印/归档产物）。 |
 | `test/` | JVM/Dart 单元测试（模型解析、URL 归一化、鉴权头、错误映射、响应式断点）。 |
 
 **共享文件**（见 5.1）之外的模块文案集中在 `lib/ui/common/` 与各页自身；界面文案统一走
@@ -114,8 +116,12 @@
 ## 4. 构建、测试与验证
 
 环境要求：Flutter 3.4x（Dart 3.11+）、Android SDK 36、JDK 21、`ANDROID_HOME` 已配置。
-本机 Flutter 位于 `/home/rt/Android/flutter`。
-桌面端另需：`clang`、`cmake`、`ninja`、`pkg-config`、GTK3 开发包、`libsecret-1-dev`（见 4.2）。
+桌面端按目标平台二选一：
+
+- **Linux**：`clang`、`cmake`、`ninja`、`pkg-config`、GTK3 开发包、`libsecret-1-dev`（见 4.2）；
+- **Windows**：Visual Studio 2022 的「使用 C++ 的桌面开发」工作负载（MSVC v143 +
+  Windows 10/11 SDK）；`cmake` / `ninja` 由 VS 自带，`flutter doctor` 能识别即可（见 4.3）。
+
 常用命令：
 
 ```bash
@@ -134,6 +140,13 @@ flutter build apk --debug
 # 打包 Linux 桌面端（产物 build/linux/x64/release/bundle/pie_note）
 eval "$(scripts/setup_linux_deps.sh --print-env)"
 flutter build linux --release
+```
+
+```powershell
+# 打包 Windows 桌面端（产物 build/windows/x64/runner/Release/pie_note.exe）
+pwsh -File scripts/build_windows.ps1              # release
+pwsh -File scripts/build_windows.ps1 -DebugBuild   # debug
+pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-windows-x64-<mode>.zip
 ```
 
 补充说明：
@@ -181,7 +194,23 @@ flutter build linux --release
 - 桌面端没有可用的系统密钥环时，保存配置会失败并提示「无法写入系统密钥环（libsecret）」，
   **不会**退化成明文存储（见 `SecretStorageException`）。
 
-### 4.3 手工/模拟器端到端验证
+### 4.3 Windows 桌面端构建
+
+- 工程目录 `windows/`（`flutter create --platforms=windows` 生成，已纳入版本管理）。
+- 前置：Visual Studio 2022 的「使用 C++ 的桌面开发」工作负载（MSVC v143 + Windows 10/11 SDK）。
+  `cmake` / `ninja` 用 VS 自带的即可（`flutter doctor -v` 的 Visual Studio 一项应为 ✓）；
+- 密码存储走 `flutter_secure_storage` 的 Windows 实现（系统凭据管理器），
+  不需要额外开发包，也没有 Linux 那套 libsecret / 链接器 shim 的问题；
+- 一键构建：`pwsh -File scripts/build_windows.ps1`（`-DebugBuild` / `-Bundle` 见脚本头注释）。
+  产物 `build/windows/x64/runner/Release/pie_note.exe`，需连同同目录的 `data/` 与 `*.dll` 一起分发；
+- 窗口外观对齐 Linux：标题 `PieNote`、默认 1180x820、最小 420x560
+  （`windows/runner/main.cpp` 与 `win32_window.*` 的 `WM_GETMINMAXINFO`）。
+
+**坑点**：runner 的 C++ 源码里是中文注释，MSVC 在中文代码页（936）下会报 C4819，
+而 `apply_standard_settings` 开了 `/WX`（警告即错误）。因此 `windows/runner/CMakeLists.txt`
+必须保留 `target_compile_options(${BINARY_NAME} PRIVATE "/utf-8")`，删掉就会构建失败。
+
+### 4.4 手工/模拟器端到端验证
 
 1. 确认本机后端可用：`curl -s http://127.0.0.1:5055/health` 返回 `{"status":"healthy"}`；
    取密码：`docker exec open-notebook printenv OPEN_NOTEBOOK_PASSWORD`。
@@ -200,8 +229,10 @@ flutter build linux --release
 6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
    竖屏是底部导航 + 单栏、点进笔记本才进二级页；横屏（宽 >= 720）改为侧边导航，
    宽 >= 840 且高 >= 480 时笔记本与笔记并排；编辑器在宽且高的窗口里阅读视图分栏。
-7. 桌面端验证点：`flutter build linux --release` 产物可直接运行；宽窗口下双栏/侧边栏生效，
-   把窗口拖窄到 420 附近自动退回底部导航 + 单栏；编辑器 `Ctrl+S` 保存成功并提示。
+7. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
+   宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回底部导航 + 单栏；
+   编辑器 `Ctrl+S` 保存成功并提示（Windows 上底部导航/双栏断点与 Linux 完全一致，
+   因为两边都只读 Flutter 的可用宽高）。
 
 ---
 
@@ -304,7 +335,8 @@ build(android): 放行局域网明文 HTTP 后端地址
 
 - 所有请求必须经 `data/api_client.dart`，统一处理 Base URL 归一化（补 `http://`、
   去尾部 `/`）、`Authorization: Bearer` 头、超时（连接/读取分开设置）与错误映射。
-- 密码**只能**存放在 `flutter_secure_storage`（Android Keystore / Linux 系统密钥环），
+- 密码**只能**存放在 `flutter_secure_storage`（Android Keystore / Linux 系统密钥环 /
+  Windows 凭据管理器），
   不得写入 `shared_preferences`、日志、异常消息、UI 明文展示（输入框用 `obscureText`）。
 - 安全存储写入失败必须**报错并中止保存**（`ConfigStore.save` 抛 `SecretStorageException`），
   不允许为了「能存就行」降级成明文；`ConfigStore.save` 先写密码再写 Base URL。
@@ -351,5 +383,6 @@ build(android): 放行局域网明文 HTTP 后端地址
 - **不做冲突合并**：同一笔记被多处同时修改时，后保存的覆盖先保存的。
 - **不做 AI 能力**：后端虽有 `/api/search/ask` 等 LLM 端点，
   但本 App 只用到搜索/笔记 CRUD，不接入模型配置与对话。
-- **桌面端只做 Linux**：当前只生成 `linux/` 平台工程；Windows/macOS 需要
-  在对应系统上 `flutter create --platforms=windows,macos .` 后各自验证，不在本仓库承诺。
+- **桌面端做 Linux 与 Windows**：`linux/` 与 `windows/` 两个平台工程都已纳入版本管理，
+  并各自在对应系统上验证过 release 构建；**macOS 未承诺**，需要时在 Mac 上
+  `flutter create --platforms=macos .` 后自行验证。
