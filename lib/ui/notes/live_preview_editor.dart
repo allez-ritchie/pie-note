@@ -306,33 +306,41 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   ///
   /// 与渲染块共用同一位置、没有边框/底色/标题栏，也没有「完成」按钮：
   /// 界面只会看到这一段的 Markdown 源码，失焦（点按别处）即自动收起。
+  /// 标题块要按渲染态同样的数值补上上边距，否则点按标题时正文会上下跳动。
   Widget _buildInlineEditor(MarkdownBlock block) {
-    return TextField(
-      key: _keyForBlock(block.start),
-      controller: _blockController,
-      focusNode: _blockFocus,
-      maxLines: null,
-      minLines: 1,
-      autofocus: true,
-      keyboardType: TextInputType.multiline,
-      textInputAction: TextInputAction.newline,
-      // 默认实现只在桌面端「点按外部」时失焦，移动端触摸不会。这里统一收起，
-      // 保证任何平台上点别处都能自然退出源码态；工具条包在
-      // [TextFieldTapRegion] 里，点它不算「外部」。
-      onTapOutside: (_) => _blockFocus.unfocus(),
-      style: const TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 14.5,
-        height: 1.6,
-      ),
-      decoration: const InputDecoration(
-        hintText: EditorStrings.contentHint,
-        filled: false,
-        isDense: true,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        contentPadding: EdgeInsets.symmetric(vertical: 2),
+    final headingLevel = markdownLeadingHeadingLevel(block.text);
+    final topSpacing = headingLevel == null
+        ? 0.0
+        : markdownHeadingTopSpacing(headingLevel);
+    return Padding(
+      padding: EdgeInsets.only(top: topSpacing),
+      child: TextField(
+        key: _keyForBlock(block.start),
+        controller: _blockController,
+        focusNode: _blockFocus,
+        maxLines: null,
+        minLines: 1,
+        autofocus: true,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        // 默认实现只在桌面端「点按外部」时失焦，移动端触摸不会。这里统一收起，
+        // 保证任何平台上点别处都能自然退出源码态；工具条包在
+        // [TextFieldTapRegion] 里，点它不算「外部」。
+        onTapOutside: (_) => _blockFocus.unfocus(),
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 14.5,
+          height: 1.6,
+        ),
+        decoration: const InputDecoration(
+          hintText: EditorStrings.contentHint,
+          filled: false,
+          isDense: true,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(vertical: 2),
+        ),
       ),
     );
   }

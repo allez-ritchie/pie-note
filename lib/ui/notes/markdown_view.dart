@@ -47,7 +47,7 @@ class MarkdownView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final styleSheet = _buildStyleSheet(theme);
+    final styleSheet = buildMarkdownStyleSheet(theme);
     // 复选框按文档顺序构建，用闭包计数把「第几个复选框」换算成全篇序号。
     var localTaskIndex = 0;
     return MarkdownBody(
@@ -121,71 +121,113 @@ class MarkdownView extends ConsumerWidget {
     }
   }
 
-  MarkdownStyleSheet _buildStyleSheet(ThemeData theme) {
-    final scheme = theme.colorScheme;
-    final base = MarkdownStyleSheet.fromTheme(theme);
-    final mono = TextStyle(
-      fontFamily: 'monospace',
-      fontSize: 13.5,
-      height: 1.55,
-      color: scheme.onSurface,
-    );
-    return base.copyWith(
-      a: TextStyle(
-        color: scheme.primary,
-        decoration: TextDecoration.underline,
-        decorationColor: scheme.primary.withValues(alpha: 0.4),
-      ),
-      p: theme.textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.7),
-      h1: theme.textTheme.headlineSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        height: 1.4,
-      ),
-      h2: theme.textTheme.titleLarge?.copyWith(
-        fontWeight: FontWeight.w700,
-        height: 1.4,
-      ),
-      h3: theme.textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.w600,
-        height: 1.4,
-      ),
-      h4: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-      h5: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-      h6: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-      strong: const TextStyle(fontWeight: FontWeight.w700),
-      em: const TextStyle(fontStyle: FontStyle.italic),
-      code: mono.copyWith(
-        backgroundColor: scheme.surfaceContainerHighest,
-        fontSize: 13,
-      ),
-      codeblockDecoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      codeblockPadding: const EdgeInsets.all(14),
-      blockquote: theme.textTheme.bodyMedium?.copyWith(
-        color: scheme.onSurfaceVariant,
-        height: 1.6,
-      ),
-      blockquoteDecoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(6),
-        border: Border(left: BorderSide(color: scheme.primary, width: 3)),
-      ),
-      blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      listBullet: theme.textTheme.bodyMedium,
-      tableHead: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-      tableBody: theme.textTheme.bodySmall,
-      tableBorder: TableBorder.all(
-        color: scheme.outlineVariant,
-        width: 0.7,
-      ),
-      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      horizontalRuleDecoration: BoxDecoration(
-        border: Border(top: BorderSide(color: scheme.outlineVariant)),
-      ),
-    );
+}
+
+/// 标题上方的额外留白（参考 Obsidian：标题上方比正文段落更松，分节更清晰）。
+///
+/// 级别越高留白越大；实时预览与阅读视图都按段落分块渲染，标题块要在自己
+/// 内部补上这段上边距，否则标题会紧贴上一段。数值是密度适中的经验值。
+double markdownHeadingTopSpacing(int level) {
+  switch (level) {
+    case 1:
+      return 22;
+    case 2:
+      return 20;
+    case 3:
+      return 16;
+    case 4:
+      return 14;
+    case 5:
+      return 12;
+    default:
+      return 10;
   }
+}
+
+final RegExp _leadingAtxHeadingPattern = RegExp(r'^ {0,3}(#{1,6})(?:[ \t]|$)');
+
+/// 取一段源码第一行的 ATX 标题级别（不是标题时返回 null）。
+///
+/// 实时预览的就地输入框会替换掉 Markdown 渲染，需要按同样数值补上标题上方
+/// 的留白，避免点按标题展开源码时整篇正文上下跳动。
+int? markdownLeadingHeadingLevel(String text) {
+  final firstLine = text.split('\n').first;
+  final match = _leadingAtxHeadingPattern.firstMatch(firstLine);
+  return match?.group(1)?.length;
+}
+
+/// 全 App 统一的 Markdown 渲染样式（预览、阅读、来源正文共用）。
+MarkdownStyleSheet buildMarkdownStyleSheet(ThemeData theme) {
+  final scheme = theme.colorScheme;
+  final base = MarkdownStyleSheet.fromTheme(theme);
+  final mono = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 13.5,
+    height: 1.55,
+    color: scheme.onSurface,
+  );
+  return base.copyWith(
+    a: TextStyle(
+      color: scheme.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: scheme.primary.withValues(alpha: 0.4),
+    ),
+    p: theme.textTheme.bodyMedium?.copyWith(fontSize: 15.5, height: 1.7),
+    h1: theme.textTheme.headlineSmall?.copyWith(
+      fontWeight: FontWeight.w700,
+      height: 1.4,
+    ),
+    h2: theme.textTheme.titleLarge?.copyWith(
+      fontWeight: FontWeight.w700,
+      height: 1.4,
+    ),
+    h3: theme.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+      height: 1.4,
+    ),
+    h4: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+    h5: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+    h6: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+    // 标题上方留白：Obsidian 风格的大标题间距。
+    h1Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(1), bottom: 6),
+    h2Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(2), bottom: 4),
+    h3Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(3), bottom: 3),
+    h4Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(4), bottom: 2),
+    h5Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(5), bottom: 2),
+    h6Padding: EdgeInsets.only(top: markdownHeadingTopSpacing(6), bottom: 2),
+    strong: const TextStyle(fontWeight: FontWeight.w700),
+    em: const TextStyle(fontStyle: FontStyle.italic),
+    code: mono.copyWith(
+      backgroundColor: scheme.surfaceContainerHighest,
+      fontSize: 13,
+    ),
+    codeblockDecoration: BoxDecoration(
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    codeblockPadding: const EdgeInsets.all(14),
+    blockquote: theme.textTheme.bodyMedium?.copyWith(
+      color: scheme.onSurfaceVariant,
+      height: 1.6,
+    ),
+    blockquoteDecoration: BoxDecoration(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(6),
+      border: Border(left: BorderSide(color: scheme.primary, width: 3)),
+    ),
+    blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    listBullet: theme.textTheme.bodyMedium,
+    tableHead: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+    tableBody: theme.textTheme.bodySmall,
+    tableBorder: TableBorder.all(
+      color: scheme.outlineVariant,
+      width: 0.7,
+    ),
+    tableCellsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    horizontalRuleDecoration: BoxDecoration(
+      border: Border(top: BorderSide(color: scheme.outlineVariant)),
+    ),
+  );
 }
 
 /// 任务列表复选框：预览态可直接点选，切换源码里的 `[ ]` / `[x]`。

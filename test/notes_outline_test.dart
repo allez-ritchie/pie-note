@@ -171,9 +171,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final after = tester.getTopLeft(probe).dy;
-    // 目标标题被滚到视口顶部附近：位置明显上移。
+    // 目标标题被滚到视口顶部附近：位置明显上移。标题上方留白（Obsidian 风格）
+    // 会让正文比纯标题位置再低二十来像素，这里按带留白的距离断言。
     expect(after, lessThan(before));
-    expect(after, lessThan(200));
+    expect(after, lessThan(260));
   });
 
   testWidgets('窄窗口大纲是底部面板，选中标题后关闭并跳转', (tester) async {
