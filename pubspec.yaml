@@ -31,3 +31,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # 应用图标（桌面端窗口图标用；Android/Windows 的启动器图标已生成到平台目录）
+    - assets/branding/app_icon.png

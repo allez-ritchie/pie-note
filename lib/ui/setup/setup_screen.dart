@@ -5,6 +5,7 @@ import '../../data/api_client.dart';
 import '../../data/config_store.dart';
 import '../../data/note_repository.dart';
 import '../../state/providers.dart';
+import '../common/app_logo.dart';
 import '../common/strings.dart';
 import 'setup_strings.dart';
 
@@ -153,24 +154,9 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (!isEditing) ...[
-                      Center(
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [scheme.primary, scheme.tertiary],
-                            ),
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                          child: Icon(
-                            Icons.edit_note_rounded,
-                            size: 42,
-                            color: scheme.onPrimary,
-                          ),
-                        ),
+                      // 品牌图标：与启动器图标同源（assets/branding/app_icon.png）。
+                      const Center(
+                        child: AppLogo(size: 76, semanticLabel: S.appName),
                       ),
                       const SizedBox(height: 20),
                       Text(

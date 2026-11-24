@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 assets/branding/app_icon.svg 的暖白底板保持一致 -->
+    <color name="ic_launcher_background">#FBF8F1</color>
+</resources>

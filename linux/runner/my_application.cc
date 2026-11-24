@@ -19,6 +19,22 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
+// 设置窗口图标：图标随 Flutter assets 一起打包，从可执行文件旁的
+// data/flutter_assets 目录读取，避免依赖系统图标主题里是否装了 PieNote。
+static void set_window_icon(GtkWindow* window) {
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path == nullptr) {
+    return;
+  }
+  g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_autofree gchar* icon_path =
+      g_build_filename(exe_dir, "data", "flutter_assets", "assets", "branding",
+                       "app_icon.png", nullptr);
+  if (g_file_test(icon_path, G_FILE_TEST_IS_REGULAR)) {
+    gtk_window_set_icon_from_file(window, icon_path, nullptr);
+  }
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -51,6 +67,8 @@ static void my_application_activate(GApplication* application) {
   } else {
     gtk_window_set_title(window, "PieNote");
   }
+
+  set_window_icon(window);
 
   // 桌面端默认窗口：宽度足够展示「笔记本 + 笔记」双栏，也方便左右对照预览。
   gtk_window_set_default_size(window, 1180, 820);
