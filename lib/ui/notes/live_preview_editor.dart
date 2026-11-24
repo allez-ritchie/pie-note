@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'editor_strings.dart';
 import 'markdown_blocks.dart';
@@ -45,7 +46,7 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   static const double _horizontalPadding = 20;
 
   final TextEditingController _blockController = TextEditingController();
-  final FocusNode _blockFocus = FocusNode();
+  late final FocusNode _blockFocus;
 
   /// 每个渲染块的 key，用于大纲跳转时定位滚动目标。
   final Map<int, GlobalKey> _blockKeys = <int, GlobalKey>{};
@@ -60,6 +61,9 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   @override
   void initState() {
     super.initState();
+    // 段首退格要越过段落边界（输入框里只有当前段，默认行为删不动上一段），
+    // 在焦点节点上先拦截 Backspace，其余按键原样交还给输入框。
+    _blockFocus = FocusNode(onKeyEvent: _handleBlockKeyEvent);
     _blockController.addListener(_commitBlockEdit);
     _blockFocus.addListener(_handleFocusChange);
   }
@@ -136,17 +140,99 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
       selection: TextSelection.collapsed(offset: block.text.length),
     );
     _blockFocus.requestFocus();
+    _revealBlock(block.start);
+  }
+
+  /// 把某个块滚进视野（展开的源码输入框也用它，保证合并后光标可见）。
+  void _revealBlock(int start) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _keyForBlock(block.start).currentContext;
-      if (target != null) {
-        Scrollable.ensureVisible(
-          target,
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-        );
-      }
+      if (!mounted) return;
+      final target = _keyForBlock(start).currentContext;
+      if (target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
     });
+  }
+
+  /// 段首退格：越过段落边界，把上一段接进来。
+  ///
+  /// 实时预览的输入框里只有当前段的源码，光标在段首时退格默认什么也删不掉
+  /// （表现为「删不动上一行的行尾」）。这里按普通文本编辑器的语义处理：
+  /// 删掉段前的分隔换行，让上一段整段展开成源码、光标落在上一行的行尾。
+  KeyEventResult _handleBlockKeyEvent(FocusNode node, KeyEvent event) {
+    if (event.logicalKey != LogicalKeyboardKey.backspace) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final selection = _blockController.selection;
+    if (!selection.isValid || !selection.isCollapsed || selection.baseOffset != 0) {
+      return KeyEventResult.ignored;
+    }
+    return _joinPreviousBlock()
+        ? KeyEventResult.handled
+        : KeyEventResult.ignored;
+  }
+
+  /// 把当前段并入上一段；没有上一段（已在正文开头）时返回 false。
+  bool _joinPreviousBlock() {
+    _commitBlockEdit();
+    final start = _activeStart;
+    if (start == null || start <= 0) return false;
+    final document = widget.controller.text;
+    if (start > document.length) return false;
+
+    final blocks = splitMarkdownBlocks(document);
+    MarkdownBlock? previous;
+    for (final block in blocks) {
+      if (block.end <= start) previous = block;
+    }
+    if (previous == null) return false;
+
+    // 只删掉一个分隔换行：段间有多个空行时，继续按退格会逐行删掉，与普通
+    // 编辑器的退格语义一致；标题行会被强制成块的场合，光标直接落到上一段末尾，
+    // 上一段的源码随之展开。
+    final newDocument = document.replaceRange(previous.end, start, '\n');
+    final cursor = previous.end;
+    final nextBlocks = newDocument == document
+        ? blocks
+        : splitMarkdownBlocks(newDocument);
+    MarkdownBlock? target;
+    for (final block in nextBlocks) {
+      if (block.start > cursor) break;
+      if (cursor <= block.end) {
+        target = block;
+        if (cursor < block.end) break;
+      }
+    }
+    final MarkdownBlock? joined = target;
+    if (joined == null) return false;
+
+    // 先同步活动段与期望文本，再写输入框：写输入框会触发 [_commitBlockEdit]，
+    // 此时两者一致，监听器直接返回，不会把刚合并的正文覆盖掉。
+    setState(() {
+      _activeStart = joined.start;
+      _lastCommittedText = joined.text;
+    });
+    if (newDocument != document) {
+      widget.controller.value = TextEditingValue(
+        text: newDocument,
+        selection: TextSelection.collapsed(offset: cursor),
+      );
+    }
+    _blockController.value = TextEditingValue(
+      text: joined.text,
+      selection: TextSelection.collapsed(offset: cursor - joined.start),
+    );
+    widget.onBlockActivated?.call(joined);
+    _blockFocus.requestFocus();
+    _revealBlock(joined.start);
+    return true;
   }
 
   /// 在最新分块里找回被点击的段落。

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pie_note/ui/notes/live_preview_editor.dart';
@@ -148,6 +149,85 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.text, '第一段\n\n\n第二段（改）\n\n第三段');
+  });
+
+  testWidgets('段首退格：删掉空行接上上一段，光标落在上一行末尾并展开源码', (tester) async {
+    final controller = TextEditingController(text: '第一段\n\n第二段\n');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第二段'));
+    await tester.pumpAndSettle();
+    final block = tester.widget<TextField>(find.byType(TextField)).controller!;
+    // 模拟连续退格删到行首：光标在本段源码开头。
+    block.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    // 空行被删掉，两段合成一段；输入框里是整段源码，光标落在上一行行尾。
+    expect(controller.text, '第一段\n第二段\n');
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '第一段\n第二段');
+    expect(field.controller!.selection.baseOffset, 3);
+
+    // 再按一次退格：能删掉上一行的最后一个字（修复前这里删不动）。
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+    expect(controller.text, '第一\n第二段\n');
+  });
+
+  testWidgets('段首退格：上一段是标题时光标落到标题末尾并展开标题源码', (tester) async {
+    final controller = TextEditingController(text: '# 标题\n\n正文段落\n');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('正文段落'));
+    await tester.pumpAndSettle();
+    tester
+        .widget<TextField>(find.byType(TextField))
+        .controller!
+        .selection = const TextSelection.collapsed(offset: 0);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    // 空行被删掉；上一段（标题）整段展开成源码，光标在标题末尾。
+    expect(controller.text, '# 标题\n正文段落\n');
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '# 标题');
+    expect(field.controller!.selection.baseOffset, 4);
+  });
+
+  testWidgets('正文第一段段首退格不改动正文', (tester) async {
+    final controller = TextEditingController(text: '第一段\n\n第二段\n');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第一段'));
+    await tester.pumpAndSettle();
+    tester
+        .widget<TextField>(find.byType(TextField))
+        .controller!
+        .selection = const TextSelection.collapsed(offset: 0);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    expect(controller.text, '第一段\n\n第二段\n');
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '第一段',
+    );
   });
 
   testWidgets('渲染态点击任务复选框直接勾选整篇正文', (tester) async {
