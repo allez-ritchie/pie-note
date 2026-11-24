@@ -117,5 +117,17 @@ void main() {
 
     expect(fake.requests.any((request) => request.method == 'PUT'), isTrue);
     expect(find.text(EditorStrings.savedToast), findsOneWidget);
+
+    // 保存提示是顶部轻横幅，不再用底部 SnackBar 遮住正在编辑的正文。
+    expect(find.byType(SnackBar), findsNothing);
+    expect(
+      tester.getTopLeft(find.text(EditorStrings.savedToast)).dy,
+      lessThan(200),
+    );
+
+    // 自动消失。
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.text(EditorStrings.savedToast), findsNothing);
   });
 }

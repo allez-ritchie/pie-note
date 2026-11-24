@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -99,6 +101,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   String? _loadError;
   DateTime? _lastSavedAt;
 
+  /// 顶部轻提示（保存成功 / 轻量操作反馈）：小尺寸、半透明、不拦截点击。
+  /// 放在顶部而不是底部，避免遮住正在编辑的正文（底部 SnackBar 会盖住输入区）。
+  String? _toastText;
+  bool _toastIsError = false;
+  int _toastSeq = 0;
+  Timer? _toastTimer;
+
   @override
   void initState() {
     super.initState();
@@ -155,6 +164,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   @override
   void dispose() {
     // 会话注销由工作区在 closeTab 时完成：dispose 阶段不能改 provider 状态。
+    _toastTimer?.cancel();
     _titleController.dispose();
     _contentController.dispose();
     _contentFocus.dispose();
@@ -206,18 +216,29 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     }
   }
 
-  void _showSnack(String message) {
+  /// 顶部轻提示：几秒后自动消失，不占用底部编辑区。
+  void _showToast(String message, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    _toastTimer?.cancel();
+    setState(() {
+      _toastText = message;
+      _toastIsError = error;
+      _toastSeq++;
+    });
+    _toastTimer = Timer(
+      error ? const Duration(milliseconds: 3200) : const Duration(milliseconds: 1800),
+      () {
+        if (!mounted) return;
+        setState(() => _toastText = null);
+      },
+    );
   }
 
   Future<bool> _save() async {
     if (_saving) return false;
     final repository = ref.read(repositoryProvider);
     if (repository == null) {
-      _showSnack(S.notConfiguredMessage);
+      _showToast(S.notConfiguredMessage, error: true);
       return false;
     }
     setState(() => _saving = true);
@@ -262,12 +283,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         _dirty = false;
       });
       widget.binding?.onDirtyChanged?.call(false);
-      _showSnack(EditorStrings.savedToast);
+      _showToast(EditorStrings.savedToast);
       return true;
     } catch (error) {
       if (!mounted) return false;
       setState(() => _saving = false);
-      _showSnack('${EditorStrings.saveFailed}：${describeError(error)}');
+      _showToast('${EditorStrings.saveFailed}：${describeError(error)}', error: true);
       return false;
     }
   }
@@ -294,7 +315,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         ref.invalidate(notesProvider(_notebookId));
       }
       if (!mounted) return;
-      _showSnack(EditorStrings.deletedToast);
+      _showToast(EditorStrings.deletedToast);
       if (widget.embedded) {
         // 笔记已删除：标签页无需再确认，直接关闭。
         widget.binding!.onClosed?.call();
@@ -302,7 +323,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         _pop(_changed);
       }
     } catch (error) {
-      _showSnack(describeError(error));
+      _showToast(describeError(error), error: true);
     }
   }
 
@@ -331,7 +352,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     final next = !_pinned;
     await _noteActions.setPinned(<String>[note.id], pinned: next);
     if (!mounted) return;
-    _showSnack(next ? NotesStrings.pinToast : NotesStrings.unpinToast);
+    _showToast(next ? NotesStrings.pinToast : NotesStrings.unpinToast);
   }
 
   Future<void> _duplicate() async {
@@ -343,10 +364,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       if (_dirty && !await _save()) return;
       await _noteActions.duplicate(note, notebookId: _notebookId);
       if (!mounted) return;
-      _showSnack(NotesStrings.duplicateToast);
+      _showToast(NotesStrings.duplicateToast);
     } catch (error) {
       if (!mounted) return;
-      _showSnack('${NotesStrings.duplicateFailed}：${describeError(error)}');
+      _showToast('${NotesStrings.duplicateFailed}：${describeError(error)}', error: true);
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
@@ -361,7 +382,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     );
     if (target == null || !mounted) return;
     if (target.notebookId == _notebookId) {
-      _showSnack(NotesStrings.moveSameNotebookHint);
+      _showToast(NotesStrings.moveSameNotebookHint);
       return;
     }
     setState(() => _actionBusy = true);
@@ -379,10 +400,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       });
       // 改绑标签页（NoteActions.move 已按旧 id 改绑，这里兜底同步标题）。
       widget.binding?.onTitleChanged?.call(outcome.note.displayTitle);
-      _showSnack(NotesStrings.movedToToast(target.label));
+      _showToast(NotesStrings.movedToToast(target.label));
     } catch (error) {
       if (!mounted) return;
-      _showSnack('${NotesStrings.moveFailed}：${describeError(error)}');
+      _showToast('${NotesStrings.moveFailed}：${describeError(error)}', error: true);
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
@@ -774,11 +795,88 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         ),
         // 桌面/横屏宽窗口里给正文限宽并居中，避免超长行难以阅读；
         // 大纲侧栏打开时放宽上限，避免两栏一起被夹得过窄。
-        body: ContentFrame(
-          maxWidth: _outlineOpen && _outlineIsSidebar ? 1400 : 1100,
-          child: _buildOutlineScaffold(scheme),
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: ContentFrame(
+                maxWidth: _outlineOpen && _outlineIsSidebar ? 1400 : 1100,
+                child: _buildOutlineScaffold(scheme),
+              ),
+            ),
+            // 保存等轻量反馈从底部挪到顶部：小尺寸、半透明、不拦截点击，
+            // 避免遮住正在编辑的正文。
+            Positioned(
+              top: 8,
+              left: 12,
+              right: 12,
+              child: IgnorePointer(child: _buildToast(scheme)),
+            ),
+          ],
         ),
         ),
+      ),
+    );
+  }
+
+  /// 顶部轻提示横幅：紧凑、半透明，进出场带淡入与轻微下移。
+  Widget _buildToast(ColorScheme scheme) {
+    final message = _toastText;
+    final background = _toastIsError
+        ? scheme.errorContainer.withValues(alpha: 0.9)
+        : scheme.inverseSurface.withValues(alpha: 0.8);
+    final foreground = _toastIsError
+        ? scheme.onErrorContainer
+        : scheme.onInverseSurface;
+    return Center(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.6),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        ),
+        child: message == null
+            ? const SizedBox.shrink()
+            : Container(
+                key: ValueKey<int>(_toastSeq),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _toastIsError
+                          ? Icons.error_outline_rounded
+                          : Icons.check_circle_outline_rounded,
+                      size: 14,
+                      color: foreground,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        message,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                              color: foreground,
+                              height: 1.3,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
       ),
     );
   }
