@@ -513,6 +513,25 @@ class WorkspaceNotifier extends Notifier<WorkspaceState> {
     _replace(tab.copyWith(targetId: noteId, parentId: notebookId));
   }
 
+  /// 笔记 id 变化后改绑标签页（「移至笔记本」= 复制 + 删除，id 会变）。
+  ///
+  /// 只改绑与该笔记相关的标签页，其它标签页保持不动；[notebookId] 同步
+  /// 更新归属笔记本，避免编辑器新建笔记时又落回旧笔记本。
+  void rebindNoteId(
+    String tabId, {
+    required String noteId,
+    String? notebookId,
+  }) {
+    final tab = state.tabOf(tabId);
+    if (tab == null || !tab.isNote) return;
+    _replace(
+      tab.copyWith(
+        targetId: noteId,
+        parentId: notebookId,
+      ),
+    );
+  }
+
   void _replace(WorkspaceTab tab) {
     state = WorkspaceState(
       tabs: [

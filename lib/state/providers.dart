@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/api_client.dart';
 import '../data/api_models.dart';
 import '../data/config_store.dart';
+import '../data/note_pin_store.dart';
 import '../data/note_repository.dart';
 
 /// 配置存储。测试可通过 `overrideWithValue` 注入内存实现。
@@ -122,6 +123,43 @@ ChatRepository _requireChatRepository(Ref ref) {
   }
   return repository;
 }
+
+/// 置顶笔记的本机存储；测试可通过 `overrideWithValue` 注入内存实现。
+final notePinStoreProvider = Provider<NotePinStore>((ref) => NotePinStore());
+
+/// 置顶笔记 id 集合。
+///
+/// 后端没有置顶字段（见 [NotePinStore] 的说明），因此置顶是**本设备**偏好。
+/// 列表页 watch 它来把置顶笔记排到最前并绘制图钉。
+class PinnedNotesNotifier extends AsyncNotifier<Set<String>> {
+  @override
+  Future<Set<String>> build() => ref.read(notePinStoreProvider).load();
+
+  /// 置顶 / 取消置顶一组笔记，返回操作后的状态。
+  Future<void> setPinned(Iterable<String> noteIds, {required bool pinned}) async {
+    final current = {...await future};
+    if (pinned) {
+      current.addAll(noteIds);
+    } else {
+      current.removeAll(noteIds);
+    }
+    await ref.read(notePinStoreProvider).save(current);
+    state = AsyncData(current);
+  }
+
+  /// 笔记被删除 / 移动（id 变化）后清理失效的置顶记录。
+  Future<void> remove(Iterable<String> noteIds) async {
+    final current = {...await future};
+    final before = current.length;
+    current.removeAll(noteIds);
+    if (current.length == before) return;
+    await ref.read(notePinStoreProvider).save(current);
+    state = AsyncData(current);
+  }
+}
+
+final pinnedNotesProvider =
+    AsyncNotifierProvider<PinnedNotesNotifier, Set<String>>(PinnedNotesNotifier.new);
 
 /// 笔记本列表（默认按更新时间倒序）。
 final notebooksProvider = FutureProvider.autoDispose<List<Notebook>>((ref) async {

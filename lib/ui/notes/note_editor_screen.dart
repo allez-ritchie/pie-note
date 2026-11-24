@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_models.dart';
+import '../../state/note_actions.dart';
 import '../../state/providers.dart';
 import '../../state/workspace.dart';
 import '../common/formatters.dart';
@@ -10,6 +11,8 @@ import '../common/layout.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import '../home/workspace_strings.dart';
+import '../notebooks/move_to_notebook_dialog.dart';
+import '../notebooks/notes_strings.dart';
 import 'editor_strings.dart';
 import 'live_preview_editor.dart';
 import 'markdown_blocks.dart';
@@ -24,6 +27,9 @@ enum _LeaveAction { save, discard, cancel }
 /// - [source] 源码模式：整篇 Markdown 纯文本编辑；
 /// - [reading] 阅读视图：只渲染不可编辑，任务复选框仍可勾选。
 enum EditorViewMode { live, source, reading }
+
+/// 编辑页⋯菜单项（置顶 / 移至笔记本 / 创建副本 / 删除）。
+enum _EditorAction { pin, move, duplicate, delete }
 
 /// 笔记编辑器：编辑 / 预览双模式，新建与编辑共用。
 ///
@@ -71,10 +77,20 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   final FocusNode _contentFocus = FocusNode();
 
   String? _noteId;
+
+  /// 笔记类型（human / ai），新建副本时保留。
+  String _noteType = 'human';
+
+  /// 当前归属笔记本（移动后会被改写；`widget.notebookId` 只用于首次构建）。
+  String? _notebookId;
   String _baselineTitle = '';
   String _baselineContent = '';
   bool _dirty = false;
   bool _saving = false;
+
+  /// 「置顶 / 移动 / 复制」这类菜单操作进行中：禁用菜单，但不影响 [_save]
+  /// （它们需要先落盘，若复用 [_saving] 会让 [_save] 直接返回 false）。
+  bool _actionBusy = false;
   bool _loadingRemote = false;
   EditorViewMode _viewMode = EditorViewMode.live;
   bool _changed = false;
@@ -86,6 +102,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   void initState() {
     super.initState();
     _noteId = widget.noteId;
+    _notebookId = widget.notebookId;
     _titleController = TextEditingController(text: widget.initialTitle ?? '');
     _contentController = TextEditingController(text: widget.initialContent ?? '');
     _baselineTitle = _titleController.text;
@@ -167,6 +184,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       if (!mounted) return;
       _titleController.text = note.title;
       _contentController.text = note.content;
+      _noteType = note.noteType.isEmpty ? 'human' : note.noteType;
       _baselineTitle = note.title;
       _baselineContent = note.content;
       _lastSavedAt = note.updated;
@@ -210,7 +228,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
           title: title.isEmpty ? null : title,
           content: content,
           noteType: 'human',
-          notebookId: widget.notebookId,
+          notebookId: _notebookId,
         );
         _noteId = saved.id;
       } else {
@@ -233,8 +251,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       // 列表与容器信息都可能变化。
       ref.invalidate(allNotesProvider);
       ref.invalidate(notebooksProvider);
-      if (widget.notebookId != null) {
-        ref.invalidate(notesProvider(widget.notebookId));
+      if (_notebookId != null) {
+        ref.invalidate(notesProvider(_notebookId));
       }
       if (!mounted) return true;
       setState(() {
@@ -270,8 +288,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       _changed = true;
       ref.invalidate(allNotesProvider);
       ref.invalidate(notebooksProvider);
-      if (widget.notebookId != null) {
-        ref.invalidate(notesProvider(widget.notebookId));
+      if (_notebookId != null) {
+        ref.invalidate(notesProvider(_notebookId));
       }
       if (!mounted) return;
       _showSnack(EditorStrings.deletedToast);
@@ -283,6 +301,88 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       }
     } catch (error) {
       _showSnack(describeError(error));
+    }
+  }
+
+  /// 把编辑中的内容包装成 [Note]，供共用操作（置顶 / 移动 / 复制）使用。
+  Note? _currentNote() {
+    final id = _noteId;
+    if (id == null) return null;
+    return Note(
+      id: id,
+      title: _titleController.text.trim(),
+      content: _contentController.text,
+      noteType: _noteType,
+      created: null,
+      updated: _lastSavedAt,
+    );
+  }
+
+  late final NoteActions _noteActions = NoteActions(ref);
+
+  bool get _pinned =>
+      (ref.read(pinnedNotesProvider).valueOrNull ?? const <String>{}).contains(_noteId);
+
+  Future<void> _togglePin() async {
+    final note = _currentNote();
+    if (note == null) return;
+    final next = !_pinned;
+    await _noteActions.setPinned(<String>[note.id], pinned: next);
+    if (!mounted) return;
+    _showSnack(next ? NotesStrings.pinToast : NotesStrings.unpinToast);
+  }
+
+  Future<void> _duplicate() async {
+    final note = _currentNote();
+    if (note == null) return;
+    setState(() => _actionBusy = true);
+    try {
+      // 先把草稿落盘，副本才是用户刚看到的内容。
+      if (_dirty && !await _save()) return;
+      await _noteActions.duplicate(note, notebookId: _notebookId);
+      if (!mounted) return;
+      _showSnack(NotesStrings.duplicateToast);
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack('${NotesStrings.duplicateFailed}：${describeError(error)}');
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Future<void> _moveToNotebook() async {
+    final note = _currentNote();
+    if (note == null) return;
+    final target = await showMoveToNotebookDialog(
+      context,
+      currentNotebookId: _notebookId,
+    );
+    if (target == null || !mounted) return;
+    if (target.notebookId == _notebookId) {
+      _showSnack(NotesStrings.moveSameNotebookHint);
+      return;
+    }
+    setState(() => _actionBusy = true);
+    try {
+      // 未保存的修改必须先落盘：移动 = 复制服务端正文 + 删除原笔记。
+      if (_dirty && !await _save()) return;
+      final outcome = await _noteActions.move(
+        note,
+        targetNotebookId: target.notebookId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _noteId = outcome.note.id;
+        _notebookId = target.notebookId;
+      });
+      // 改绑标签页（NoteActions.move 已按旧 id 改绑，这里兜底同步标题）。
+      widget.binding?.onTitleChanged?.call(outcome.note.displayTitle);
+      _showSnack(NotesStrings.movedToToast(target.label));
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack('${NotesStrings.moveFailed}：${describeError(error)}');
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
     }
   }
 
@@ -385,6 +485,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // 订阅置顶集合：菜单里的「置顶 / 取消置顶」文案要跟着立即变化。
+    ref.watch(pinnedNotesProvider);
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, result) {
@@ -468,14 +570,58 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
               ),
             ),
             if (_noteId != null)
-              PopupMenuButton<String>(
-                tooltip: '更多',
-                onSelected: (value) {
-                  if (value == 'delete') _delete();
+              PopupMenuButton<_EditorAction>(
+                tooltip: S.more,
+                enabled: !_actionBusy,
+                onSelected: (action) {
+                  switch (action) {
+                    case _EditorAction.pin:
+                      _togglePin();
+                    case _EditorAction.move:
+                      _moveToNotebook();
+                    case _EditorAction.duplicate:
+                      _duplicate();
+                    case _EditorAction.delete:
+                      _delete();
+                  }
                 },
-                itemBuilder: (context) => const [
+                itemBuilder: (context) => [
                   PopupMenuItem(
-                    value: 'delete',
+                    value: _EditorAction.pin,
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        _pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                      ),
+                      title: Text(_pinned ? NotesStrings.unpin : NotesStrings.pin),
+                      subtitle: const Text(
+                        NotesStrings.pinLocalOnlyHint,
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: _EditorAction.move,
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.drive_file_move_outlined),
+                      title: Text(NotesStrings.moveToNotebook),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: _EditorAction.duplicate,
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.content_copy_rounded),
+                      title: Text(NotesStrings.duplicate),
+                    ),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: _EditorAction.delete,
                     child: ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,

@@ -127,6 +127,55 @@ class NoteRepository {
 
   Future<void> deleteNote(String id) => _client.deleteNote(id);
 
+  /// 复制一条笔记（可选放进目标笔记本）。
+  ///
+  /// 先取回完整正文再创建：按笔记本过滤的列表接口不返回 `content`，
+  /// 直接拿列表里的对象复制会丢正文。
+  Future<Note> duplicateNote(String id, {String? notebookId}) async {
+    final source = await fetchNote(id);
+    return createNote(
+      title: source.title.isEmpty ? null : '${source.displayTitle} 副本',
+      content: source.content,
+      noteType: source.isAi ? 'ai' : 'human',
+      notebookId: notebookId,
+    );
+  }
+
+  /// 把笔记移到目标笔记本；[targetNotebookId] 为 `null` 表示移到「全部笔记」
+  /// （不属于任何笔记本）。
+  ///
+  /// **实现说明（重要）**：Open Notebook 目前没有公开的「移动笔记」接口——
+  /// 笔记与笔记本的归属是一条 `artifact` 关系边，`PUT /api/notes/{id}` 只接受
+  /// `title / content / note_type`（见 AGENTS.md 第 2.2 节）。因此这里用
+  /// 「复制到目标笔记本 + 删除原笔记」实现移动：
+  /// - 标题 / 正文 / 类型保持不变；
+  /// - **笔记 id 会变化**（`created` 也会重置），调用方必须把打开着的标签页
+  ///   改绑到新 id；
+  /// - 复制失败时不会删除原笔记，失败是安全的。
+  Future<Note> moveNote(String id, {required String? targetNotebookId}) async {
+    // 注意：这里不能复用 [duplicateNote]——它会给标题加「副本」后缀，
+    // 移动必须原样保留标题与正文。
+    final source = await fetchNote(id);
+    final moved = await createNote(
+      title: source.title.isEmpty ? null : source.title,
+      content: source.content,
+      noteType: source.isAi ? 'ai' : 'human',
+      notebookId: targetNotebookId,
+    );
+    try {
+      await deleteNote(id);
+    } on ApiException {
+      // 删除失败：把刚创建的副本清掉，避免留下一条重复笔记。
+      try {
+        await deleteNote(moved.id);
+      } on ApiException {
+        // 清理失败只能放弃，错误仍然抛给调用方。
+      }
+      rethrow;
+    }
+    return moved;
+  }
+
   // ---------------------------------------------------------------------------
   // 搜索
   // ---------------------------------------------------------------------------
