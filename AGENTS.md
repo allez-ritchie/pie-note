@@ -19,6 +19,7 @@
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
 - 笔记编辑页有**大纲视图**：按 ATX 标题生成层级大纲，宽窗口是右侧侧栏、窄窗口是底部面板，
   点标题可在实时预览 / 源码 / 阅读三视图里跳转（对应 Obsidian 的 Outline 核心）；
+  有子标题的条目带可旋转的折叠箭头，标题栏可「全部折叠 / 全部展开」；
 - **按可用宽高自适应横竖屏与桌面窗口**：窄屏单栏 + 底部悬浮胶囊工具栏，宽屏侧边导航 +
   「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
 - **多标签页工作区**：笔记本、搜索、设置与每篇笔记都是标签页；桌面端是 VSCode / Obsidian
@@ -183,8 +184,8 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
-| `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节（阅读视图跳转用）。 |
-| `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转。 |
+| `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`）。 |
+| `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转；自带折叠状态（单个标题 + 全部折叠/展开）。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
 | `lib/ui/sources/` | 来源页：列表（状态胶囊 / 轮询）、添加来源对话框（链接 / 文本 / 文件）、详情（正文 + 洞见）。 |
@@ -351,6 +352,9 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    宽窗口右侧出现大纲侧栏（窄窗口是底部面板），列出 H1/H2 层级；点「第二章」后
    实时预览 / 源码 / 阅读三种视图都应滚动到该标题（源码视图光标落在标题文字上）；
    源码视图把光标移到别的标题后，大纲高亮跟着变；代码块里的 `# 注释` 不出现在大纲里。
+   有子标题的条目左侧有「›」，点击只折叠它的子标题（兄弟标题不受影响），折叠后箭头转为朝下 /朝右；
+   标题栏的「全部折叠 / 全部展开」应在两种状态之间切换；扁平（无子标题）笔记不显示这两个按钮。
+   把光标移进被折叠的子标题时，其上级会自动展开，保证高亮项始终可见。
    再点一次目录图标（或侧栏的关闭按钮）收起侧栏。
 8. 多标签验证点：桌面点笔记开新标签、再次点击已有笔记只切换；`Ctrl/Cmd + W` 关闭、
    `+T` 新建、`+Tab` 循环、`+1..9` 跳转；关闭未保存标签会弹「保存并关闭 / 不保存 / 取消」；

@@ -202,3 +202,73 @@ List<MarkdownSection> splitMarkdownSections(String markdown) {
   }
   return sections;
 }
+
+/// 标题 [index] 是否拥有子标题（紧随其后、级别更深的任意标题）。
+///
+/// 大纲的折叠箭头只在「有子项」的标题上出现；`## A` 后面直接跟着另一个
+/// `## B` 时两者是兄弟，A 没有子项。
+bool headingHasChildren(List<MarkdownHeading> headings, int index) {
+  if (index < 0 || index + 1 >= headings.length) return false;
+  // 标题按文档顺序排列：紧随其后的标题若更深，它就是本标题的子项；
+  // 同级或更浅则本标题没有子项（后面的属于兄弟或更上层）。
+  return headings[index + 1].level > headings[index].level;
+}
+
+/// 标题 [index] 的所有祖先标题序号（由浅到深），不含自身。
+///
+/// 用于「光标进入被折叠的章节时自动展开它的上级标题」。
+List<int> headingAncestorIndexes(List<MarkdownHeading> headings, int index) {
+  if (index <= 0 || index >= headings.length) return const <int>[];
+  final level = headings[index].level;
+  final ancestors = <int>[];
+  // 从本项往前扫，每遇到更浅的标题就记一个祖先，直到没有更浅的。
+  var currentLevel = level;
+  for (var i = index - 1; i >= 0 && currentLevel > 1; i--) {
+    if (headings[i].level < currentLevel) {
+      ancestors.insert(0, i);
+      currentLevel = headings[i].level;
+    }
+  }
+  return ancestors;
+}
+
+/// 折叠状态 [collapsed] 下，每个标题是否是「可见」的。
+///
+/// 折叠语义与 Obsidian 一致：折叠某个标题只隐藏它的**子孙标题**，
+/// 兄弟标题不受影响。因此只要某个标题的任意祖先被折叠，它就不可见。
+/// 返回值与 [headings] 等长、一一对应。
+List<bool> visibleOutlineHeadings(
+  List<MarkdownHeading> headings,
+  Set<int> collapsed,
+) {
+  if (headings.isEmpty) return const <bool>[];
+  final visible = List<bool>.filled(headings.length, true);
+  // 祖先栈：每一层记录「最近一个该级别的标题索引」。
+  final levelStack = <int>[];
+  final indexByLevel = <int, int>{};
+  for (var i = 0; i < headings.length; i++) {
+    final level = headings[i].level;
+    // 弹出所有同级或更深的层级，栈顶就是最近的父级标题。
+    while (levelStack.isNotEmpty && levelStack.last >= level) {
+      levelStack.removeLast();
+    }
+    final parent = levelStack.isEmpty ? null : indexByLevel[levelStack.last];
+    levelStack.add(level);
+    indexByLevel[level] = i;
+    if (parent == null) {
+      visible[i] = true;
+      continue;
+    }
+    // 父级可见且未折叠，本项才可见（父级自身的可见性已在前面确定）。
+    visible[i] = visible[parent] && !collapsed.contains(parent);
+  }
+  return visible;
+}
+
+/// 需要折叠的全部标题序号：所有带子项的标题（「全部折叠」按钮用）。
+Set<int> collapsibleHeadingIndexes(List<MarkdownHeading> headings) {
+  return <int>{
+    for (var i = 0; i < headings.length; i++)
+      if (headingHasChildren(headings, i)) i,
+  };
+}

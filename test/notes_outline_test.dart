@@ -189,6 +189,146 @@ void main() {
     expect(_content.substring(offset), startsWith('第二章'));
   });
 
+  testWidgets('有子标题的标题前有折叠箭头，点箭头只折叠该标题的子标题', (tester) async {
+    await _pumpEditor(tester, const Size(1400, 900));
+    await _openOutline(tester);
+
+    // 「第一章」「第二章」各有子标题，其余是叶子标题：只有它们有箭头。
+    final toggles = find.descendant(
+      of: find.byType(NotesOutlinePanel),
+      matching: find.byIcon(Icons.chevron_right_rounded),
+    );
+    expect(toggles, findsNWidgets(2));
+    expect(_inOutline('第一节'), findsOneWidget);
+
+    // 箭头展开态朝下（0.25 圈），折叠态朝右（0 圈）。
+    double firstTurns() => tester
+        .widget<AnimatedRotation>(
+          find.descendant(
+            of: find.byType(NotesOutlinePanel),
+            matching: find.byType(AnimatedRotation),
+          ).first,
+        )
+        .turns;
+    expect(firstTurns(), 0.25);
+
+    // 点「第一章」前的箭头：它的子标题「第一节」隐藏，兄弟「第二章」不受影响。
+    await tester.tap(toggles.first);
+    await tester.pumpAndSettle();
+    expect(_inOutline('第一节'), findsNothing);
+    expect(_inOutline('第二章'), findsOneWidget);
+    expect(firstTurns(), 0);
+
+    // 再点一次展开回来。
+    await tester.tap(toggles.first);
+    await tester.pumpAndSettle();
+    expect(_inOutline('第一节'), findsOneWidget);
+    expect(firstTurns(), 0.25);
+  });
+
+  testWidgets('标题栏「全部折叠 / 全部展开」切换整份大纲', (tester) async {
+    await _pumpEditor(tester, const Size(1400, 900));
+    await _openOutline(tester);
+
+    expect(find.text(EditorStrings.outlineCollapseAll), findsOneWidget);
+    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
+    await tester.pumpAndSettle();
+
+    // 全部折叠后只剩两个一级标题，子标题都藏起来；按钮变成「全部展开」。
+    expect(_inOutline('第一节'), findsNothing);
+    expect(_inOutline('第二节'), findsNothing);
+    expect(_inOutline('第一章'), findsOneWidget);
+    expect(find.text(EditorStrings.outlineExpandAll), findsOneWidget);
+
+    await tester.tap(find.text(EditorStrings.outlineExpandAll));
+    await tester.pumpAndSettle();
+    expect(_inOutline('第一节'), findsOneWidget);
+    expect(_inOutline('第二节'), findsOneWidget);
+    expect(find.text(EditorStrings.outlineCollapseAll), findsOneWidget);
+  });
+
+  testWidgets('折叠某标题后仍可点击其兄弟标题跳转', (tester) async {
+    await _pumpEditor(tester, const Size(1400, 900));
+    await _switchTo(tester, EditorStrings.modeSource);
+    await _openOutline(tester);
+
+    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
+    await tester.pumpAndSettle();
+    await tester.tap(_inOutline('第二章'));
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(_content.substring(field.controller!.selection.baseOffset), startsWith('第二章'));
+  });
+
+  testWidgets('全部折叠后把光标移到被隐藏的子标题，大纲自动展开上级', (tester) async {
+    await _pumpEditor(tester, const Size(1400, 900));
+    // 切到源码，把光标放进第二章的「第二节」（被折叠后不可见）。
+    await _switchTo(tester, EditorStrings.modeSource);
+    final secondSection = _content.indexOf('## 第二节');
+    final content = tester.widget<TextField>(find.byType(TextField).last);
+    content.controller!.selection = TextSelection.collapsed(offset: secondSection);
+
+    await _openOutline(tester);
+    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
+    await tester.pumpAndSettle();
+    expect(_inOutline('第二节'), findsNothing);
+
+    // 光标移出去再移回来，触发一次活动标题变化。
+    content.controller!.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pumpAndSettle();
+    content.controller!.selection = TextSelection.collapsed(offset: secondSection);
+    await tester.pumpAndSettle();
+
+    // 上级「第二章」被自动展开，活动标题可见且可点。
+    expect(_inOutline('第二节'), findsOneWidget);
+    await tester.tap(_inOutline('第二节'));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.controller!.selection.baseOffset, greaterThan(0));
+  });
+
+  testWidgets('没有子标题的扁平大纲不显示折叠按钮', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1400, 900);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              baseUrl: 'http://127.0.0.1:5055',
+              password: 'pw',
+              httpClient: MockClient(
+                (request) async => _json({
+                  'id': 'note:flat',
+                  'title': '扁平笔记',
+                  'content': '# 甲\n\n正文\n\n# 乙\n\n正文\n',
+                  'note_type': 'human',
+                }),
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: NoteEditorScreen(noteId: 'note:flat')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openOutline(tester);
+
+    expect(find.text(EditorStrings.outlineCollapseAll), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(NotesOutlinePanel),
+        matching: find.byIcon(Icons.chevron_right_rounded),
+      ),
+      findsNothing,
+    );
+    expect(_inOutline('甲'), findsOneWidget);
+    expect(_inOutline('乙'), findsOneWidget);
+  });
+
   testWidgets('没有标题的笔记显示大纲空状态', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1400, 900);

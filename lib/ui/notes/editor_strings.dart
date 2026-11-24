@@ -54,6 +54,10 @@ class EditorStrings {
   static const String outlineEmptyTitle = '这篇笔记还没有标题';
   static const String outlineEmptyMessage = '用「# 标题」写下小标题后，这里会生成可跳转的大纲。';
   static const String outlineUntitledHeading = '（空标题）';
+  static const String outlineCollapseAll = '全部折叠';
+  static const String outlineExpandAll = '全部展开';
+  static const String outlineCollapseOne = '折叠此标题';
+  static const String outlineExpandOne = '展开此标题';
 
   static String outlineCount(int count) => '$count 个标题';
 

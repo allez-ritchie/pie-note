@@ -135,4 +135,67 @@ void main() {
       expect(stripMarkdownInline('无标记'), '无标记');
     });
   });
+
+  group('headingHasChildren / collapsibleHeadingIndexes', () {
+    test('只有紧跟更深标题的项才算有子项', () {
+      const markdown = '# A\n\n### A1\n\n## B\n\n## C\n\n### C1\n';
+      final headings = parseMarkdownHeadings(markdown);
+      expect(headings.map((h) => h.text), ['A', 'A1', 'B', 'C', 'C1']);
+
+      expect(headingHasChildren(headings, 0), isTrue); // A → A1
+      expect(headingHasChildren(headings, 1), isFalse); // A1 后面是更浅的 B
+      expect(headingHasChildren(headings, 2), isFalse); // B 后面是同级 C
+      expect(headingHasChildren(headings, 3), isTrue); // C → C1
+      expect(headingHasChildren(headings, 4), isFalse);
+      expect(headingHasChildren(headings, -1), isFalse);
+      expect(headingHasChildren(headings, 99), isFalse);
+
+      expect(collapsibleHeadingIndexes(headings), {0, 3});
+      expect(collapsibleHeadingIndexes(const <MarkdownHeading>[]), isEmpty);
+    });
+  });
+
+  group('visibleOutlineHeadings', () {
+    const markdown = '''
+# A
+
+## A1
+
+### A1a
+
+## A2
+
+# B
+
+## B1
+''';
+
+    test('未折叠时全部可见', () {
+      final headings = parseMarkdownHeadings(markdown);
+      expect(visibleOutlineHeadings(headings, <int>{}), everyElement(isTrue));
+    });
+
+    test('折叠父标题只隐藏其子孙，兄弟标题仍可见', () {
+      final headings = parseMarkdownHeadings(markdown);
+      // 索引：0=A 1=A1 2=A1a 3=A2 4=B 5=B1
+      expect(
+        visibleOutlineHeadings(headings, {0}),
+        [true, false, false, false, true, true],
+      );
+      // 折叠 A1 只藏 A1a，A2 是 A1 的兄弟，仍然可见。
+      expect(
+        visibleOutlineHeadings(headings, {1}),
+        [true, true, false, true, true, true],
+      );
+      // 祖先折叠时，即使自己没被折叠也不可见（嵌套折叠不叠加）。
+      expect(
+        visibleOutlineHeadings(headings, {0, 1}),
+        [true, false, false, false, true, true],
+      );
+    });
+
+    test('空列表返回空', () {
+      expect(visibleOutlineHeadings(const <MarkdownHeading>[], {0}), isEmpty);
+    });
+  });
 }
