@@ -1145,31 +1145,34 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     // 正文被编辑后偏移量会整体变化：清掉已经不存在的节的 Key，避免 Map 无限增长。
     final offsets = {for (final section in sections) section.start};
     _sectionKeys.removeWhere((offset, _) => !offsets.contains(offset));
-    return NotificationListener<ScrollNotification>(
-      onNotification: _handlePreviewScroll,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var i = 0; i < sections.length; i++)
-              Padding(
-                // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
-                padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
-                child: KeyedSubtree(
-                  key: _sectionKeys.putIfAbsent(
-                    sections[i].start,
-                    () => GlobalKey(debugLabel: 'section-${sections[i].start}'),
-                  ),
-                  child: MarkdownView(
-                    content: sections[i].markdown,
-                    taskStartIndex: sections[i].taskOffset,
-                    onToggleTask: _toggleTask,
-                    selectable: true,
+    // 阅读视图按标题分成多节渲染，但选区必须由**一个** SelectionArea 统一管理，
+    // 否则跨节拖选只能选中当前节（每节各有一个独立选区）。
+    return SelectionArea(
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _handlePreviewScroll,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < sections.length; i++)
+                Padding(
+                  // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
+                  padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+                  child: KeyedSubtree(
+                    key: _sectionKeys.putIfAbsent(
+                      sections[i].start,
+                      () => GlobalKey(debugLabel: 'section-${sections[i].start}'),
+                    ),
+                    child: MarkdownView(
+                      content: sections[i].markdown,
+                      taskStartIndex: sections[i].taskOffset,
+                      onToggleTask: _toggleTask,
+                    ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

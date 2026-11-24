@@ -42,6 +42,11 @@ class MarkdownView extends ConsumerWidget {
   ///
   /// 桌面端在「阅读」视图里常要复制正文；而实时预览的渲染态需要点按段落
   /// 进入编辑，开启选中会与点击手势冲突，因此只在阅读视图显式开启。
+  ///
+  /// 注意：选中能力由上层 [SelectionArea] 提供（而不是给每个段落各开一个
+  /// `SelectableText`）。Markdown 渲染会按段落 / 列表项 / 标题拆成多个
+  /// 独立文本组件，各自开选区就只能一段一段选、跨段复制不了；套在一个
+  /// [SelectionArea] 里才能像网页一样连续选择并一次复制全文。
   final bool selectable;
 
   @override
@@ -50,9 +55,8 @@ class MarkdownView extends ConsumerWidget {
     final styleSheet = buildMarkdownStyleSheet(theme);
     // 复选框按文档顺序构建，用闭包计数把「第几个复选框」换算成全篇序号。
     var localTaskIndex = 0;
-    return MarkdownBody(
+    final body = MarkdownBody(
       data: transformWikiLinks(content),
-      selectable: selectable,
       styleSheet: styleSheet,
       onTapText: onTapText,
       onTapLink: (text, href, title) => _handleLink(context, ref, href),
@@ -70,6 +74,16 @@ class MarkdownView extends ConsumerWidget {
               );
             },
     );
+    if (!selectable) return body;
+    // 选中态：整个渲染树套一个 SelectionArea，段落之间可以连续选择、一次复制。
+    // 不能改用 MarkdownBody.selectable：它会给每个段落各建一个 SelectableText，
+    // 选区互不相通（跨段拖选只能选中一段）。
+    //
+    // 上层已经提供了选区容器（阅读视图把整页包在一个 SelectionArea 里，这样
+    // 跨「节」也能连续选）时不要再套一层：嵌套的 SelectionArea 会互相抢手势，
+    // 外层反而选不中。
+    if (SelectionContainer.maybeOf(context) != null) return body;
+    return SelectionArea(child: body);
   }
 
   Future<void> _handleLink(BuildContext context, WidgetRef ref, String? href) async {
