@@ -16,9 +16,11 @@ import '../notebooks/notes_strings.dart';
 import 'editor_strings.dart';
 import 'live_preview_editor.dart';
 import 'markdown_blocks.dart';
+import 'markdown_outline.dart';
 import 'markdown_tasks.dart';
 import 'markdown_toolbar.dart';
 import 'markdown_view.dart';
+import 'notes_outline_panel.dart';
 
 enum _LeaveAction { save, discard, cancel }
 
@@ -109,6 +111,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     _baselineContent = _contentController.text;
     _titleController.addListener(_recomputeDirty);
     _contentController.addListener(_recomputeDirty);
+    _contentController.addListener(_handleCursorMoved);
     _titleController.addListener(_publishTitle);
     // 标签页绑定会写 Riverpod 状态，不能在 initState（构建期）同步做，
     // 否则会命中「Tried to modify a provider while the widget tree was building」。
@@ -450,7 +453,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     if (mode == _viewMode) return;
     // 切换前先让输入框失焦，确保实时预览里的段落编辑已提交。
     FocusScope.of(context).unfocus();
-    setState(() => _viewMode = mode);
+    // 阅读视图的高亮由滚动位置驱动，切过去之前先按当前光标算一个初值。
+    final heading = mode == EditorViewMode.reading ? _currentHeadingIndex : -1;
+    setState(() {
+      _viewMode = mode;
+      if (heading >= 0) _activeHeading = heading;
+    });
   }
 
   /// 勾选任务列表复选框：直接改写整篇正文里的 `[ ]` / `[x]`。
@@ -480,6 +488,141 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       );
       _contentFocus.requestFocus();
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 大纲
+  // ---------------------------------------------------------------------------
+
+  /// 大纲在宽窗口里是否以右侧常驻侧栏展示（窄窗口改为底部弹出面板）。
+  bool _outlineOpen = false;
+
+  /// 大纲跳转请求：每次点击都是新实例，实时预览据此滚动到对应段落。
+  OutlineJumpRequest? _outlineJump;
+
+  /// 当前大纲高亮项：编辑时跟随光标 / 选区，阅读时跟随滚动位置。
+  int _activeHeading = -1;
+
+  /// 正文控制器内容变化后重新解析标题。
+  ///
+  /// 光标移动/逐字符输入都会走到这里，长笔记全量解析会很贵，因此按正文缓存：
+  /// 只有正文变了才重新扫描标题。
+  List<MarkdownHeading> get _headings {
+    final text = _contentController.text;
+    if (text == _headingsCacheText) return _headingsCache;
+    _headingsCacheText = text;
+    _headingsCache = parseMarkdownHeadings(text);
+    return _headingsCache;
+  }
+
+  String _headingsCacheText = '';
+  List<MarkdownHeading> _headingsCache = const <MarkdownHeading>[];
+
+  /// 正文光标 / 滚动位置变化时更新大纲高亮。
+  void _syncActiveHeading(int? offset) {
+    final index = activeHeadingIndex(_headings, offset);
+    if (index == _activeHeading || !mounted) return;
+    setState(() => _activeHeading = index);
+  }
+
+  /// 源码模式 / 实时预览里移动光标时同步大纲高亮；阅读视图自己按滚动位置算。
+  ///
+  /// 大纲没展开时不做任何事：这个监听挂每次按键，没必要为不可见的面板重建页面。
+  void _handleCursorMoved() {
+    if (!_outlineOpen || _viewMode == EditorViewMode.reading) return;
+    final selection = _contentController.selection;
+    _syncActiveHeading(selection.isValid ? selection.extentOffset : null);
+  }
+
+  /// 点击大纲里的标题：滚动 / 定位到该标题。
+  ///
+  /// - 源码模式：把光标放到标题正文处并聚焦，再让输入框把它滚进视野；
+  /// - 实时预览：交给 [LivePreviewEditor] 滚动到该段；
+  /// - 阅读视图：按标题分节渲染，直接滚动到该节的 Key。
+  void _jumpToHeading(MarkdownHeading heading) {
+    switch (_viewMode) {
+      case EditorViewMode.source:
+        final offset = heading.textStart.clamp(
+          0,
+          _contentController.text.length,
+        );
+        _contentController.selection = TextSelection.collapsed(offset: offset);
+        _contentFocus.requestFocus();
+        // 输入框已经聚焦时，程序化改选区不会触发框架的「滚动到光标」，
+        // 这里直接用 EditableTextState 的公开 API 定位（重新聚焦会闪键盘）。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _contentFocus.context
+              ?.findAncestorStateOfType<EditableTextState>()
+              ?.bringIntoView(TextPosition(offset: offset));
+        });
+      case EditorViewMode.live:
+        setState(() {
+          _outlineJump = OutlineJumpRequest(heading.offset);
+          _activeHeading = _headings.indexOf(heading);
+        });
+      case EditorViewMode.reading:
+        setState(() => _activeHeading = _headings.indexOf(heading));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final target = _sectionContextFor(heading.offset);
+          if (target == null) return;
+          Scrollable.ensureVisible(
+            target,
+            alignment: 0.02,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+        });
+    }
+  }
+
+  /// 阅读视图里每一节的 key：按该节起始偏移量索引，供大纲跳转定位。
+  final Map<int, GlobalKey> _sectionKeys = <int, GlobalKey>{};
+
+  /// 找到包含 [offset] 的那一节的 BuildContext。
+  ///
+  /// 正常情况下标题行自己就是节首（[MarkdownSourceMap] 会在标题处切块），
+  /// 但标题紧贴上一段、没有空行时，它会被并进上一节；这里回退到那一节，
+  /// 保证「点了总能跳过去」。
+  BuildContext? _sectionContextFor(int offset) {
+    final exact = _sectionKeys[offset]?.currentContext;
+    if (exact != null) return exact;
+    int? nearest;
+    for (final start in _sectionKeys.keys) {
+      if (start <= offset && (nearest == null || start > nearest)) {
+        nearest = start;
+      }
+    }
+    return nearest == null ? null : _sectionKeys[nearest]?.currentContext;
+  }
+
+  /// 大纲是否以右侧常驻侧栏展示。
+  bool get _outlineIsSidebar => Responsive.useOutlineSidebar(context);
+
+  /// 大纲按钮：宽窗口开合侧栏，窄窗口弹出底部面板（选中标题后关闭面板）。
+  Future<void> _toggleOutline() async {
+    final headings = _headings;
+    final active = _currentHeadingIndex;
+    if (_outlineIsSidebar) {
+      setState(() => _outlineOpen = !_outlineOpen);
+      return;
+    }
+    final picked = await showNotesOutlineSheet(
+      context,
+      headings: headings,
+      activeIndex: active,
+    );
+    if (picked == null || !mounted) return;
+    _jumpToHeading(picked);
+  }
+
+  /// 当前高亮项：编辑视图按光标所在行，阅读视图按滚动位置维护的 [_activeHeading]。
+  int get _currentHeadingIndex {
+    if (_viewMode == EditorViewMode.reading) return _activeHeading;
+    final selection = _contentController.selection;
+    if (!selection.isValid) return -1;
+    return activeHeadingIndex(_headings, selection.extentOffset);
   }
 
   @override
@@ -553,6 +696,15 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
                   ),
                 ),
               ],
+            ),
+            // 大纲入口：宽窗口直接开合右侧侧栏，窄窗口用底部弹出面板。
+            IconButton(
+              tooltip: _outlineOpen && _outlineIsSidebar
+                  ? EditorStrings.outlineHide
+                  : EditorStrings.outlineTooltip,
+              isSelected: _outlineOpen && _outlineIsSidebar,
+              onPressed: _toggleOutline,
+              icon: const Icon(Icons.toc_rounded),
             ),
             Badge(
               isLabelVisible: _dirty,
@@ -634,10 +786,39 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
             const SizedBox(width: 4),
           ],
         ),
-        // 桌面/横屏宽窗口里给正文限宽并居中，避免超长行难以阅读。
-        body: ContentFrame(maxWidth: 1100, child: _buildBody(scheme)),
+        // 桌面/横屏宽窗口里给正文限宽并居中，避免超长行难以阅读；
+        // 大纲侧栏打开时放宽上限，避免两栏一起被夹得过窄。
+        body: ContentFrame(
+          maxWidth: _outlineOpen && _outlineIsSidebar ? 1400 : 1100,
+          child: _buildOutlineScaffold(scheme),
+        ),
         ),
       ),
+    );
+  }
+
+  /// 正文 + 大纲侧栏。
+  ///
+  /// 大纲是「按需打开」的：常驻会挤压正文，且大多数短笔记用不到。
+  Widget _buildOutlineScaffold(ColorScheme scheme) {
+    final sidebar = _outlineOpen && _outlineIsSidebar;
+    if (!sidebar) return _buildBody(scheme);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: _buildBody(scheme)),
+        const VerticalDivider(width: 1),
+        SizedBox(
+          width: 268,
+          child: NotesOutlinePanel(
+            headings: _headings,
+            activeIndex: _currentHeadingIndex,
+            padded: true,
+            onClose: () => setState(() => _outlineOpen = false),
+            onJump: _jumpToHeading,
+          ),
+        ),
+      ],
     );
   }
 
@@ -800,6 +981,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
             controller: _contentController,
             onToggleTask: _toggleTask,
             onEditAsSource: _editBlockAsSource,
+            onBlockActivated: (block) =>
+                _syncActiveHeading(block.start),
+            jump: _outlineJump,
           ),
         ),
       ],
@@ -874,14 +1058,70 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         ),
       );
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-      child: MarkdownView(
-        content: content,
-        onToggleTask: _toggleTask,
-        selectable: true,
+    // 阅读视图按标题分节：每节挂 Key 供大纲跳转，并在滚动时刷新大纲高亮。
+    final sections = splitMarkdownSections(content);
+    // 正文被编辑后偏移量会整体变化：清掉已经不存在的节的 Key，避免 Map 无限增长。
+    final offsets = {for (final section in sections) section.start};
+    _sectionKeys.removeWhere((offset, _) => !offsets.contains(offset));
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handlePreviewScroll,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < sections.length; i++)
+              Padding(
+                // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
+                padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+                child: KeyedSubtree(
+                  key: _sectionKeys.putIfAbsent(
+                    sections[i].start,
+                    () => GlobalKey(debugLabel: 'section-${sections[i].start}'),
+                  ),
+                  child: MarkdownView(
+                    content: sections[i].markdown,
+                    taskStartIndex: sections[i].taskOffset,
+                    onToggleTask: _toggleTask,
+                    selectable: true,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  /// 阅读视图滚动时按「滚过视口顶部的最后一个标题」更新大纲高亮。
+  bool _handlePreviewScroll(ScrollNotification notification) {
+    if (_viewMode != EditorViewMode.reading || notification.depth != 0) {
+      return false;
+    }
+    final headings = _headings;
+    if (headings.isEmpty) return false;
+    // 视口顶边：标题滚到它上方之后，下一个标题才算「当前所在位置」。
+    final viewport = notification.context?.findRenderObject();
+    final viewportTop = viewport is RenderBox && viewport.hasSize
+        ? viewport.localToGlobal(Offset.zero).dy
+        : 0.0;
+    var current = -1;
+    for (var i = 0; i < headings.length; i++) {
+      final target = _sectionKeys[headings[i].offset]?.currentContext;
+      final box = target?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      // 允许 16 的余量：标题刚好压在视口顶边时仍算当前标题。
+      if (top <= viewportTop + 16) {
+        current = i;
+      } else {
+        break;
+      }
+    }
+    if (current != _activeHeading) {
+      setState(() => _activeHeading = current);
+    }
+    return false;
   }
 }
 

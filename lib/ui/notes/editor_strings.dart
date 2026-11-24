@@ -47,6 +47,16 @@ class EditorStrings {
   static const String taskDone = '已完成';
   static const String taskTodo = '未完成';
 
+  // 大纲
+  static const String outline = '大纲';
+  static const String outlineTooltip = '大纲：按标题跳转';
+  static const String outlineHide = '隐藏大纲';
+  static const String outlineEmptyTitle = '这篇笔记还没有标题';
+  static const String outlineEmptyMessage = '用「# 标题」写下小标题后，这里会生成可跳转的大纲。';
+  static const String outlineUntitledHeading = '（空标题）';
+
+  static String outlineCount(int count) => '$count 个标题';
+
   // Markdown 工具条
   static const String toolH1 = '一级标题';
   static const String toolH2 = '二级标题';

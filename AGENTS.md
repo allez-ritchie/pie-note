@@ -17,6 +17,8 @@
 - 以 **Markdown** 作为笔记正文格式，编辑器提供**实时预览 / 源码 / 阅读**三视图
   （参考 Obsidian：默认实时预览，点按段落就地展开该段源码；阅读视图可直接勾选任务列表）；
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
+- 笔记编辑页有**大纲视图**：按 ATX 标题生成层级大纲，宽窗口是右侧侧栏、窄窗口是底部面板，
+  点标题可在实时预览 / 源码 / 阅读三视图里跳转（对应 Obsidian 的 Outline 核心）；
 - **按可用宽高自适应横竖屏与桌面窗口**：窄屏单栏 + 底部悬浮胶囊工具栏，宽屏侧边导航 +
   「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
 - **多标签页工作区**：笔记本、搜索、设置与每篇笔记都是标签页；桌面端是 VSCode / Obsidian
@@ -176,11 +178,13 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/home/workspace_navigator.dart` | 标签页统一打开入口（一级页面 / 笔记列表 / 笔记 / 草稿）。 |
 | `lib/state/workspace.dart` | 工作区状态：`WorkspaceTab` / `WorkspaceState` / `WorkspaceNotifier`（打开、激活、关闭、前进后退、会话绑定）。 |
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）；笔记的⋯菜单、多选与批量操作在 `notes_screen.dart`，移动目标选择在 `move_to_notebook_dialog.dart`。 |
-| `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
+| `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、大纲跳转、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
 | `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
+| `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节（阅读视图跳转用）。 |
+| `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
 | `lib/ui/sources/` | 来源页：列表（状态胶囊 / 轮询）、添加来源对话框（链接 / 文本 / 文件）、详情（正文 + 洞见）。 |
@@ -257,6 +261,7 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
 | 侧边导航 + 标签条 | 宽 >= 720 | `NavigationRail` + 顶部标签条 |
 | 双栏列表 | 宽 >= 840 且高 >= 480 | 笔记本页左列表、右笔记，点击不跳页 |
 | 编辑器分栏 | 宽 >= 900 且高 >= 420 | 阅读视图左右分栏（渲染 + Markdown 源码） |
+| 大纲侧栏 | 宽 >= 1080 且高 >= 420 | 编辑器右侧常驻大纲侧栏；更窄时点标题栏的目录图标弹底部面板 |
 
 多标签的形态同样只按宽度切换（不读 orientation）：
 
@@ -342,16 +347,21 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    竖屏是页面铺满 + 底部悬浮胶囊工具栏 + 单栏，点进笔记本打开新的笔记列表标签页；
    横屏（宽 >= 720）改为侧边导航 + 顶部标签条，宽 >= 840 且高 >= 480 时笔记本与笔记并排；
    编辑器在宽且高的窗口里阅读视图分栏。
-7. 多标签验证点：桌面点笔记开新标签、再次点击已有笔记只切换；`Ctrl/Cmd + W` 关闭、
+7. 大纲验证点：打开含多个 `#` / `##` 标题的笔记，点 AppBar 的目录图标；
+   宽窗口右侧出现大纲侧栏（窄窗口是底部面板），列出 H1/H2 层级；点「第二章」后
+   实时预览 / 源码 / 阅读三种视图都应滚动到该标题（源码视图光标落在标题文字上）；
+   源码视图把光标移到别的标题后，大纲高亮跟着变；代码块里的 `# 注释` 不出现在大纲里。
+   再点一次目录图标（或侧栏的关闭按钮）收起侧栏。
+8. 多标签验证点：桌面点笔记开新标签、再次点击已有笔记只切换；`Ctrl/Cmd + W` 关闭、
    `+T` 新建、`+Tab` 循环、`+1..9` 跳转；关闭未保存标签会弹「保存并关闭 / 不保存 / 取消」；
    手机端点胶囊的标签图标进入 2 列卡片总览，可切换 / 关闭 / 新建；
    长笔记上划时胶囊自动隐藏，惯性滚动中点按屏幕停下**不应**回显，下划才显示。
-8. 笔记操作验证点：笔记列表的⋯菜单应有「重命名 / 移至笔记本 / 置顶 / 创建副本 / 删除」；
+9. 笔记操作验证点：笔记列表的⋯菜单应有「重命名 / 移至笔记本 / 置顶 / 创建副本 / 删除」；
    重命名后正文首行的 `# 标题` 同步改写、其余正文不变；置顶后该笔记置顶到「置顶」分组、
    重启 App 仍在（本机偏好）；「移至笔记本」后原笔记本列表里消失、目标笔记本里出现，
    且已打开的笔记标签页仍指向新的笔记 id；多选（长按行 / 标题栏「选择」）后可用
    全选 / 反选 / 底部批量条（置顶 / 移至 / 复制 / 删除），部分失败有汇总提示。
-9. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
+10. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
    宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回悬浮工具栏 + 单栏；
    编辑器 `Ctrl+S` 保存成功并提示（Windows 上悬浮工具栏/双栏断点与 Linux 完全一致，
    因为两边都只读 Flutter 的可用宽高）。
@@ -501,6 +511,8 @@ build(android): 放行局域网明文 HTTP 后端地址
 ## 8. 已知边界（非 bug）
 
 - **不做图片处理**：Markdown 中的 `![](path)` 不加载、不上传，按文本显示。
+- **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲，
+  且跳转是「滚动到标题」而不是 Markdown 锚点链接。
 - **不做离线编辑**：断网时列表与笔记读取失败会提示错误，不提供本地缓存兜底。
 - **不做冲突合并**：同一笔记被多处同时修改时，后保存的覆盖先保存的。
 - **AI 能力全部由后端承担**：本 App 只调用 Open Notebook 的

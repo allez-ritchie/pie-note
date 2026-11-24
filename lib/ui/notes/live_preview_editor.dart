@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'editor_strings.dart';
 import 'markdown_blocks.dart';
+import 'markdown_outline.dart';
 import 'markdown_toolbar.dart';
 import 'markdown_view.dart';
 
@@ -20,6 +21,8 @@ class LivePreviewEditor extends StatefulWidget {
     required this.controller,
     this.onToggleTask,
     this.onEditAsSource,
+    this.onBlockActivated,
+    this.jump,
   });
 
   /// 整篇笔记正文的控制器（与源码模式共用）。
@@ -31,6 +34,12 @@ class LivePreviewEditor extends StatefulWidget {
   /// 「切到源码」入口：把某段的源码范围交给上层，在源码模式里继续编辑。
   final ValueChanged<MarkdownBlock>? onEditAsSource;
 
+  /// 某一段被展开为源码时回调（含其源码起始偏移），供大纲高亮跟随。
+  final ValueChanged<MarkdownBlock>? onBlockActivated;
+
+  /// 大纲跳转请求：滚动到该偏移量所在段落。
+  final OutlineJumpRequest? jump;
+
   @override
   State<LivePreviewEditor> createState() => _LivePreviewEditorState();
 }
@@ -40,17 +49,49 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
 
   final TextEditingController _blockController = TextEditingController();
   final FocusNode _blockFocus = FocusNode();
-  final GlobalKey _activeKey = GlobalKey();
+
+  /// 每个渲染块的 key，用于大纲跳转时定位滚动目标。
+  final Map<int, GlobalKey> _blockKeys = <int, GlobalKey>{};
 
   /// 正在编辑的段的起始偏移；为空表示全部处于渲染态。
   int? _activeStart;
   String _lastCommittedText = '';
+
+  GlobalKey _keyForBlock(int start) =>
+      _blockKeys.putIfAbsent(start, () => GlobalKey(debugLabel: 'block-$start'));
 
   @override
   void initState() {
     super.initState();
     _blockController.addListener(_commitBlockEdit);
     _blockFocus.addListener(_handleFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant LivePreviewEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final request = widget.jump;
+    if (request == null || request == oldWidget.jump) return;
+    // 这里不能写回正在编辑的段落：didUpdateWidget 处于 build 阶段，控制器写入会
+    // 触发上层的标题/脏标记监听（可能改 provider）。逐字符监听已经把段落实时写回，
+    // 因此直接滚动即可。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final blocks = splitMarkdownBlocks(widget.controller.text);
+      if (blocks.isEmpty) return;
+      final target = blocks
+          .where((block) => block.start <= request.offset)
+          .lastOrNull ??
+          blocks.first;
+      final context = _keyForBlock(target.start).currentContext;
+      if (context == null) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.02,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
@@ -88,13 +129,14 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
       _activeStart = block.start;
       _lastCommittedText = block.text;
     });
+    widget.onBlockActivated?.call(block);
     _blockController.value = TextEditingValue(
       text: block.text,
       selection: TextSelection.collapsed(offset: block.text.length),
     );
     _blockFocus.requestFocus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _activeKey.currentContext;
+      final target = _keyForBlock(block.start).currentContext;
       if (target != null) {
         Scrollable.ensureVisible(
           target,
@@ -160,6 +202,9 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   @override
   Widget build(BuildContext context) {
     final blocks = splitMarkdownBlocks(widget.controller.text);
+    // 正文被改写后偏移量会整体变化，清掉已经不存在的块的 Key，避免 Map 无限增长。
+    final starts = {for (final block in blocks) block.start};
+    _blockKeys.removeWhere((start, _) => !starts.contains(start));
     if (blocks.isEmpty) {
       return Center(
         child: Padding(
@@ -214,6 +259,7 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   Widget _buildRenderedBlock(MarkdownBlock block) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
+      key: _keyForBlock(block.start),
       onTap: () => _activate(block),
       borderRadius: BorderRadius.circular(8),
       hoverColor: scheme.primary.withValues(alpha: 0.04),
@@ -231,7 +277,7 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
 
   Widget _buildBlockEditor(MarkdownBlock block, ColorScheme scheme) {
     return Container(
-      key: _activeKey,
+      key: _keyForBlock(block.start),
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,

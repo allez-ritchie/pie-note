@@ -23,6 +23,10 @@ class Breakpoints {
 
   /// 编辑分栏要求的最小高度：横屏手机高度不足时用单栏。
   static const double editorSplitMinHeight = 420;
+
+  /// 笔记大纲常驻侧栏的宽度：再窄就让大纲改用底部弹出面板，
+  /// 否则侧栏会明显挤压正文。
+  static const double outlineSidebar = 1080;
 }
 
 /// 当前窗口的响应式判定。
@@ -52,6 +56,13 @@ class Responsive {
   static bool useEditorSplit(BuildContext context) {
     final size = sizeOf(context);
     return size.width >= Breakpoints.editorSplit &&
+        size.height >= Breakpoints.editorSplitMinHeight;
+  }
+
+  /// 笔记大纲是否作为右侧常驻侧栏（否则用底部弹出面板）。
+  static bool useOutlineSidebar(BuildContext context) {
+    final size = sizeOf(context);
+    return size.width >= Breakpoints.outlineSidebar &&
         size.height >= Breakpoints.editorSplitMinHeight;
   }
 }
