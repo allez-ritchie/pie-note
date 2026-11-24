@@ -15,7 +15,6 @@ import '../notebooks/move_to_notebook_dialog.dart';
 import '../notebooks/notes_strings.dart';
 import 'editor_strings.dart';
 import 'live_preview_editor.dart';
-import 'markdown_blocks.dart';
 import 'markdown_outline.dart';
 import 'markdown_tasks.dart';
 import 'markdown_toolbar.dart';
@@ -25,7 +24,7 @@ import 'notes_outline_panel.dart';
 enum _LeaveAction { save, discard, cancel }
 
 /// 编辑器视图模式，对应 Obsidian「视图 + 模式」的简化：
-/// - [live] 实时预览：渲染态直接编辑，点按段落就地展开该段源码（Live Preview）；
+/// - [live] 实时预览：渲染态直接编辑，点按段落就在该段位置显示源码（Live Preview）；
 /// - [source] 源码模式：整篇 Markdown 纯文本编辑；
 /// - [reading] 阅读视图：只渲染不可编辑，任务复选框仍可勾选。
 enum EditorViewMode { live, source, reading }
@@ -474,19 +473,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         text: next,
         selection: selection.isValid ? selection : TextSelection.collapsed(offset: 0),
       );
-    });
-  }
-
-  /// 实时预览里的「切到源码」：切到源码模式并选中该段。
-  void _editBlockAsSource(MarkdownBlock block) {
-    setState(() => _viewMode = EditorViewMode.source);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _contentController.selection = TextSelection(
-        baseOffset: block.start,
-        extentOffset: block.end,
-      );
-      _contentFocus.requestFocus();
     });
   }
 
@@ -980,9 +966,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
           child: LivePreviewEditor(
             controller: _contentController,
             onToggleTask: _toggleTask,
-            onEditAsSource: _editBlockAsSource,
-            onBlockActivated: (block) =>
-                _syncActiveHeading(block.start),
+            onBlockActivated: (block) => _syncActiveHeading(block.start),
             jump: _outlineJump,
           ),
         ),

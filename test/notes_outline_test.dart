@@ -145,8 +145,14 @@ void main() {
     final after = tester.getTopLeft(probe).dy;
     expect(after, lessThan(before));
     expect(after, lessThan(320));
-    // 实时预览里点大纲只滚动，不展开源码编辑框。
-    expect(find.text(EditorStrings.liveEditingBlock), findsNothing);
+    // 实时预览里点大纲只滚动，不展开就地编辑的源码输入框。
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.style?.fontFamily == 'monospace',
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('阅读视图点大纲标题，正文滚动到该标题', (tester) async {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pie_note/ui/notes/editor_strings.dart';
 import 'package:pie_note/ui/notes/live_preview_editor.dart';
 
 Widget _wrap({required TextEditingController controller, ValueChanged<int>? onToggleTask}) {
@@ -33,11 +32,20 @@ void main() {
     expect(find.textContaining('# 标题'), findsNothing);
     expect(find.byType(TextField), findsNothing);
 
-    // 点按标题段落 → 只有该段展开为源码输入框。
+    // 点按标题段落 → 只有该段就地变成源码输入框：无边框、无「完成」按钮。
     await tester.tap(find.text('标题'));
     await tester.pumpAndSettle();
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.text(EditorStrings.liveEditingBlock), findsOneWidget);
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '# 标题');
+    expect(field.minLines, 1);
+    expect(field.decoration!.filled, isFalse);
+    expect(field.decoration!.border, InputBorder.none);
+    expect(field.decoration!.enabledBorder, InputBorder.none);
+    expect(field.decoration!.focusedBorder, InputBorder.none);
+    expect(find.byType(TextButton), findsNothing);
+    // 渲染态的标题已被源码替换，下面的段落仍然渲染。
+    expect(find.text('标题'), findsNothing);
+    expect(find.textContaining('正文加粗内容'), findsOneWidget);
 
     // 就地改写标题，失焦后写回整篇正文，其余段落保持不变。
     await tester.enterText(find.byType(TextField), '## 新标题');
@@ -47,6 +55,82 @@ void main() {
 
     expect(controller.text, '## 新标题\n\n正文**加粗**内容\n\n- 列表项\n');
     expect(find.byType(TextField), findsNothing);
+  });
+
+  testWidgets('展开一段后点按另一段，直接切换且不残留旧编辑框', (tester) async {
+    final controller = TextEditingController(text: '# 标题\n\n正文段落\n');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('标题'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '# 标题',
+    );
+
+    // 点按另一段：新的段落就地展开，旧段落回到渲染态。
+    await tester.tap(find.text('正文段落'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '正文段落',
+    );
+    expect(find.text('标题'), findsOneWidget);
+    expect(find.textContaining('# 标题'), findsNothing);
+  });
+
+  testWidgets('改长一段后点下一段，展开的仍是点击的那一段', (tester) async {
+    final controller = TextEditingController(
+      text: '第一段\n\n第二段\n\n第三段\n',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    // 把第一段改长（偏移量整体后移），再点第三段。
+    await tester.tap(find.text('第一段'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '第一段（变长了很多很多字）');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第三段'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '第三段',
+    );
+    expect(controller.text, '第一段（变长了很多很多字）\n\n第二段\n\n第三段\n');
+  });
+
+  testWidgets('点按正文下方空白处收起源码态', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 600);
+    addTearDown(tester.view.reset);
+
+    final controller = TextEditingController(text: '唯一一段\n');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('唯一一段'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+
+    // 点正文下方的大片空白（避开底部工具条）。
+    await tester.tapAt(const Offset(400, 300));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('唯一一段'), findsOneWidget);
+    expect(controller.text, '唯一一段\n');
   });
 
   testWidgets('编辑某段时保持其他段落的源码空白不变', (tester) async {

@@ -180,7 +180,7 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/state/workspace.dart` | 工作区状态：`WorkspaceTab` / `WorkspaceState` / `WorkspaceNotifier`（打开、激活、关闭、前进后退、会话绑定）。 |
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）；笔记的⋯菜单、多选与批量操作在 `notes_screen.dart`，移动目标选择在 `move_to_notebook_dialog.dart`。 |
 | `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、大纲跳转、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
-| `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
+| `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落，该段就地变成无边框源码输入框，失焦自动收起（块级 Live Preview）。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
@@ -341,8 +341,9 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    `curl -H "Authorization: Bearer <pw>" http://127.0.0.1:5055/api/notes/<id>` 内容已更新；
    搜索页输入关键词能命中后端笔记；`settings` 里改密码为错误值后测试连接应失败并提示。
 5. 实时预览验证点：打开含标题/任务列表/代码块/引用的笔记，默认应以渲染态展示；
-   点按某一段落，仅该段展开为源码输入框（其余仍渲染），工具条可插入 Markdown；
-   点「完成」或空白处收起并还原渲染；点任务复选框应立即勾选并标为「未保存」；
+   点按某一段落，仅该段就地变成**无边框、无「完成」按钮**的源码输入框（其余仍渲染），
+   工具条可插入 Markdown；点按别处（失焦）即自动收起并还原渲染；
+   点任务复选框应立即勾选并标为「未保存」；
    保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱。
 6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
    竖屏是页面铺满 + 底部悬浮胶囊工具栏 + 单栏，点进笔记本打开新的笔记列表标签页；

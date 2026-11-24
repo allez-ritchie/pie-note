@@ -38,11 +38,8 @@ class EditorStrings {
   static const String modeSource = '源码';
   static const String modeReading = '阅读';
   static const String switchMode = '视图模式';
-  static const String liveHint = '点按任意段落即可就地编辑，点击空白处收起';
-  static const String liveEditingBlock = '正在编辑本段';
-  static const String liveDone = '完成';
+  static const String liveHint = '点按任意段落即可就地编辑，点击别处自动收起';
   static const String startWriting = '开始书写';
-  static const String liveSourceToggle = '切到源码';
   static const String paneSource = 'MARKDOWN 源码';
   static const String taskDone = '已完成';
   static const String taskTodo = '未完成';
