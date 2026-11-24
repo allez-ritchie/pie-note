@@ -230,6 +230,31 @@ void main() {
     );
   });
 
+  testWidgets('把一段删空后仍然可以继续退格接上上一段（焦点不丢）', (tester) async {
+    final controller = TextEditingController(text: 'AAAA\n\nBBBB');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('BBBB'));
+    await tester.pumpAndSettle();
+    // 连续退格把整段删空：空段不在分块结果里，但输入框必须留着，
+    // 否则焦点随块一起消失，后面的退格就删不动上一行（Android 上必现）。
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pumpAndSettle();
+    expect(controller.text, 'AAAA\n\n');
+    expect(find.byType(TextField), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    expect(controller.text, 'AAAA\n');
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'AAAA');
+    expect(field.controller!.selection.baseOffset, 4);
+  });
+
   testWidgets('渲染态点击任务复选框直接勾选整篇正文', (tester) async {
     final toggles = <int>[];
     final controller = TextEditingController(

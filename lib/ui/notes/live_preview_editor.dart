@@ -310,10 +310,39 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   @override
   Widget build(BuildContext context) {
     final blocks = splitMarkdownBlocks(widget.controller.text);
+    final active = _activeStart;
+    // 正在编辑的段可能刚被删空：空块不会出现在分块结果里，但输入框必须留着，
+    // 否则焦点随块一起消失、后续退格就再也删不动上一行（Android 上必现）。
+    // 这类「空段」按纯插入位置渲染在相邻两块之间。
+    final liveBlock = active == null
+        ? null
+        : blocks.where((block) => block.start <= active && active < block.end).firstOrNull;
+    final pendingOffset = active != null && liveBlock == null ? active : null;
+
     // 正文被改写后偏移量会整体变化，清掉已经不存在的块的 Key，避免 Map 无限增长。
     final starts = {for (final block in blocks) block.start};
+    if (pendingOffset != null) starts.add(pendingOffset);
     _blockKeys.removeWhere((start, _) => !starts.contains(start));
-    if (blocks.isEmpty) {
+
+    final children = <Widget>[];
+    var insertedPending = false;
+    for (var index = 0; index < blocks.length; index++) {
+      if (pendingOffset != null && !insertedPending && blocks[index].start > pendingOffset) {
+        children.add(_buildInlineEditor(start: pendingOffset, text: ''));
+        insertedPending = true;
+      }
+      if (liveBlock != null && blocks[index].start == liveBlock.start) {
+        children.add(_buildInlineEditor(start: liveBlock.start, text: liveBlock.text));
+      } else {
+        children.add(_buildRenderedBlock(index, blocks[index]));
+      }
+    }
+    if (pendingOffset != null && !insertedPending) {
+      children.add(_buildInlineEditor(start: pendingOffset, text: ''));
+    }
+    final editing = liveBlock != null || pendingOffset != null;
+
+    if (children.isEmpty && !editing) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -327,7 +356,6 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
         ),
       );
     }
-    final active = _activeStart;
     return Column(
       children: [
         Expanded(
@@ -344,20 +372,12 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var index = 0; index < blocks.length; index++)
-                    if (active != null &&
-                        blocks[index].start <= active &&
-                        active < blocks[index].end)
-                      _buildInlineEditor(blocks[index])
-                    else
-                      _buildRenderedBlock(index, blocks[index]),
-                ],
+                children: children,
               ),
             ),
           ),
         ),
-        if (active != null)
+        if (editing)
           // 工具条也算「输入框的一部分」：点按它不应收起源码编辑。
           TextFieldTapRegion(
             child: MarkdownToolbar(
@@ -393,15 +413,15 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   /// 与渲染块共用同一位置、没有边框/底色/标题栏，也没有「完成」按钮：
   /// 界面只会看到这一段的 Markdown 源码，失焦（点按别处）即自动收起。
   /// 标题块要按渲染态同样的数值补上上边距，否则点按标题时正文会上下跳动。
-  Widget _buildInlineEditor(MarkdownBlock block) {
-    final headingLevel = markdownLeadingHeadingLevel(block.text);
+  Widget _buildInlineEditor({required int start, required String text}) {
+    final headingLevel = markdownLeadingHeadingLevel(text);
     final topSpacing = headingLevel == null
         ? 0.0
         : markdownHeadingTopSpacing(headingLevel);
     return Padding(
       padding: EdgeInsets.only(top: topSpacing),
       child: TextField(
-        key: _keyForBlock(block.start),
+        key: _keyForBlock(start),
         controller: _blockController,
         focusNode: _blockFocus,
         maxLines: null,
