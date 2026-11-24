@@ -32,7 +32,7 @@ http.Response _json(Object? body) => http.Response(
   headers: const {'content-type': 'application/json; charset=utf-8'},
 );
 
-ApiClient _fakeClient() {
+ApiClient _fakeClient({String? content}) {
   return ApiClient(
     baseUrl: 'http://127.0.0.1:5055',
     password: 'pw',
@@ -40,7 +40,7 @@ ApiClient _fakeClient() {
       return _json({
         'id': 'note:demo',
         'title': '选区演示',
-        'content': _content,
+        'content': content ?? _content,
         'note_type': 'human',
         'updated': '2026-11-24 03:00:00+00:00',
       });
@@ -51,6 +51,7 @@ ApiClient _fakeClient() {
 Future<void> _pumpEditor(
   WidgetTester tester, {
   Size size = const Size(1000, 900),
+  String? content,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -58,7 +59,9 @@ Future<void> _pumpEditor(
 
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(_fakeClient())],
+      overrides: [
+        apiClientProvider.overrideWithValue(_fakeClient(content: content)),
+      ],
       child: const MaterialApp(home: NoteEditorScreen(noteId: 'note:demo')),
     ),
   );
@@ -206,6 +209,21 @@ void main() {
 
       final selected = probe.selected ?? '';
       expect(selected.contains('第一节'), isTrue, reason: '选区应跨到下一节');
+    });
+  });
+
+  group('选区块不干扰原有交互', () {
+    testWidgets('阅读视图任务复选框仍可点选并标记未保存', (tester) async {
+      await _pumpEditor(tester, content: '- [ ] 任务甲\n- [x] 任务乙\n');
+      await _switchToReading(tester);
+
+      expect(find.byIcon(Icons.check_box_outline_blank_rounded), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.check_box_outline_blank_rounded));
+      await tester.pumpAndSettle();
+
+      // 勾选改写正文 → 变成两个已勾选，并出现「未保存」标记。
+      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
+      expect(find.text(EditorStrings.unsavedBadge), findsOneWidget);
     });
   });
 
