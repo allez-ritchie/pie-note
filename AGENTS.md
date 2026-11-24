@@ -197,7 +197,9 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `windows/` | Windows 桌面端工程（Flutter 生成，窗口标题/默认尺寸/最小尺寸在 `runner/main.cpp` 与 `runner/win32_window.*`）。 |
 | `scripts/setup_linux_deps.sh` | Linux 桌面端构建依赖准备（libsecret 开发文件 / clang 链接器 shim）。 |
 | `scripts/build_linux.sh` / `scripts/build_windows.ps1` | 桌面端一键构建脚本（依赖准备 → 构建 → 打印/归档产物）。 |
+| `scripts/generate_app_icons.py` | 由 `assets/branding/app_icon.svg` 重新生成 Android mipmap / adaptive icon、Windows `.ico` 与图标 PNG。 |
 | `test/` | JVM/Dart 单元测试（模型解析、URL 归一化、鉴权头、错误映射、响应式断点）。 |
+| `assets/branding/` | 应用图标：`app_icon.svg` 是唯一设计源，`app_icon.png` 供桌面窗口图标与配置页 Logo 使用。 |
 
 **共享文件**（见 5.1）之外的模块文案集中在 `lib/ui/common/` 与各页自身；界面文案统一走
 `lib/ui/common/strings.dart`，禁止在各页面里散落硬编码文案。

@@ -187,6 +187,19 @@ lib/
 宽窗口下正文用 `ContentFrame` 限宽居中；密码存储位置、快捷键等平台差异文案走
 `lib/ui/common/app_platform.dart`。
 
+## 应用图标
+
+图标设计源文件是 `assets/branding/app_icon.svg`（暖白圆角底板 + 三片饼图）。
+改图标只需替换这个 SVG，然后跑：
+
+```bash
+python3 scripts/generate_app_icons.py   # 需要 Python 3 + Pillow + 本机 Chrome/Chromium
+```
+
+脚本会重新生成 Android 各密度 mipmap、adaptive icon（含 Android 13 单色图标）、
+Windows 的 `app_icon.ico`，以及桌面窗口图标与配置页 Logo 用的
+`assets/branding/app_icon.png`。**不要直接手改平台目录里的 PNG**，下次生成会被覆盖。
+
 ## 已知边界
 
 - 实时预览是「块级」而非「行内」揭示：点按后展开的是整段（空行分隔的块或标题），
