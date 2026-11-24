@@ -64,6 +64,7 @@
 | `POST` | `/api/notes` | 创建笔记（`{title?, content, note_type?, notebook_id?}`） |
 | `PUT` | `/api/notes/{id}` | 更新笔记（`{title?, content?, note_type?}`） |
 | `DELETE` | `/api/notes/{id}` | 删除笔记 |
+| — | 笔记 ↔ 笔记本 | **没有公开接口**：归属只是一条 `artifact` 关系边，`PUT /api/notes/{id}` 不接受 `notebook_id`。客户端「移至笔记本」= 复制到目标笔记本 + 删除原笔记（见 2.5）。 |
 | `POST` | `/api/search` | 搜索知识库（`{query, type: text\|vector, limit, notebook_ids?}`） |
 | `GET` | `/api/sources?notebook_id={id}&limit=&offset=&sort_by=updated&sort_order=desc` | 来源列表（单页上限 100） |
 | `GET` | `/api/sources/{id}` | 来源详情（含 `full_text` 与 `notebooks`） |
@@ -127,6 +128,28 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
   之后轮询 `/api/sources/{id}/status` 到 `completed` / `failed`；
 - `embed=true` 需要后端配置嵌入模型，否则会静默不生成向量（`embedded=false`）。
 
+### 2.5 笔记的「置顶」与「移至笔记本」（客户端实现约定）
+
+这两项在 Open Notebook 1.15.1 的公开 API 上**都没有原生支持**，客户端用如下方式落地，
+改动时不要误以为后端有对应字段：
+
+- **置顶**：`NoteResponse` 没有置顶字段，`PUT /api/notes/{id}` 也只接受
+  `title/content/note_type`。因此置顶是**本设备偏好**，存在 `shared_preferences`
+  （`NotePinStore`，key `notes.pinned`），不写进 Markdown 正文（会破坏块间空白、
+  污染正文）。UI 上必须保留「仅本设备」提示，不要让用户误以为跨设备同步。
+- **移至笔记本**：笔记归属是 `artifact` 关系边，没有 REST 端点。`NoteRepository.moveNote`
+  用「`GET` 取完整正文 → `POST` 到目标笔记本 → `DELETE` 原笔记」实现移动，语义与主流
+  笔记产品一致（移动 = 改变唯一归属，不是复制/引用）：
+  - **笔记 id 会变化**（`created` 也会重置）。工作区必须把已打开的标签页改绑到新 id
+    （`WorkspaceNotifier.rebindNoteId`），否则标签页会指向一条已删除的笔记；
+  - 移动前必须先把这篇笔记正在编辑的标签页落盘（`NoteActions._flushDirtyTabs`），
+    否则未保存的修改会随删除一起丢失；
+  - 删除原笔记失败时会回滚刚创建的副本，失败是安全的；
+  - 「目标 = 源列表所在笔记本」时不做任何请求（无法原地移动，只能忽略）。
+- **批量操作**：后端没有批量端点，只能是 N 次单条请求；部分失败必须把失败条数
+  汇总提示（`NotesStrings.batchPartialFailure`），不能只报成功。
+- **删除是硬删除**：没有回收站 / Undo，列表与批量删除都必须二次确认。
+
 ---
 
 ## 3. 目录结构
@@ -137,7 +160,11 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/app.dart` | `PieNoteApp`：根据配置状态决定进入「配置页」还是「主界面」。 |
 | `lib/data/api_client.dart` | HTTP 客户端：Base URL 归一化、Bearer 头注入、超时、错误映射（`ApiException`）。 |
 | `lib/data/api_models.dart` | `Notebook` / `Note` / `SearchHit` 等不可变模型与 `fromJson`（统一容错 `null`）。 |
-| `lib/data/note_repository.dart` | 业务门面：笔记本/笔记/搜索的增删改查，供 provider 调用。 |
+| `lib/data/note_repository.dart` | 业务门面：笔记本/笔记/搜索的增删改查，供 provider 调用（含「复制 + 删除」式的 `moveNote`）。 |
+| `lib/data/note_actions.dart` | 笔记操作结果类型（重命名 / 移动的返回值）。 |
+| `lib/data/note_pin_store.dart` | 置顶笔记的本机存储（后端无置顶字段，只存 `shared_preferences`）。 |
+| `lib/data/note_text_edits.dart` | 标题 / 正文首行标题的纯文本编辑（重命名时同步 `# 标题`）。 |
+| `lib/state/note_actions.dart` | 列表与编辑器共用的笔记操作：重命名、移至笔记本、置顶、副本、批量删除 / 移动。 |
 | `lib/data/config_store.dart` | 配置持久化：`baseUrl` 走 `shared_preferences`，`password` 走 `flutter_secure_storage`。 |
 | `lib/state/providers.dart` | Riverpod provider：配置状态、API 客户端、仓库、各列表页的 `AsyncNotifier`。 |
 | `lib/ui/setup/setup_screen.dart` | 首次启动配置页：Base URL + 密码 + 连接测试。 |
@@ -148,7 +175,7 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/home/mobile_tab_overview.dart` | 移动端「多标签总览」页：2 列卡片网格，切换 / 关闭 / 新建。 |
 | `lib/ui/home/workspace_navigator.dart` | 标签页统一打开入口（一级页面 / 笔记列表 / 笔记 / 草稿）。 |
 | `lib/state/workspace.dart` | 工作区状态：`WorkspaceTab` / `WorkspaceState` / `WorkspaceNotifier`（打开、激活、关闭、前进后退、会话绑定）。 |
-| `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）。 |
+| `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）；笔记的⋯菜单、多选与批量操作在 `notes_screen.dart`，移动目标选择在 `move_to_notebook_dialog.dart`。 |
 | `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
 | `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落就地展开该段源码（块级 Live Preview）。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
@@ -319,7 +346,12 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    `+T` 新建、`+Tab` 循环、`+1..9` 跳转；关闭未保存标签会弹「保存并关闭 / 不保存 / 取消」；
    手机端点胶囊的标签图标进入 2 列卡片总览，可切换 / 关闭 / 新建；
    长笔记上划时胶囊自动隐藏，惯性滚动中点按屏幕停下**不应**回显，下划才显示。
-8. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
+8. 笔记操作验证点：笔记列表的⋯菜单应有「重命名 / 移至笔记本 / 置顶 / 创建副本 / 删除」；
+   重命名后正文首行的 `# 标题` 同步改写、其余正文不变；置顶后该笔记置顶到「置顶」分组、
+   重启 App 仍在（本机偏好）；「移至笔记本」后原笔记本列表里消失、目标笔记本里出现，
+   且已打开的笔记标签页仍指向新的笔记 id；多选（长按行 / 标题栏「选择」）后可用
+   全选 / 反选 / 底部批量条（置顶 / 移至 / 复制 / 删除），部分失败有汇总提示。
+9. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
    宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回悬浮工具栏 + 单栏；
    编辑器 `Ctrl+S` 保存成功并提示（Windows 上悬浮工具栏/双栏断点与 Linux 完全一致，
    因为两边都只读 Flutter 的可用宽高）。
