@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pie_note/ui/common/strings.dart';
 import 'package:pie_note/ui/notes/markdown_code_block.dart';
 import 'package:pie_note/ui/notes/markdown_view.dart';
+import 'package:pie_note/ui/theme/app_theme.dart';
 
 Widget _wrap(String content, {VoidCallback? onTapCodeBlock}) {
   return ProviderScope(
@@ -115,6 +116,103 @@ void main() {
       // 短代码块的底色不再跟着最长一行收缩：两个块宽度一致，且接近整页宽度。
       expect(shortWidth, longWidth);
       expect(shortWidth, greaterThan(600));
+    });
+  });
+
+  group('语法高亮', () {
+    /// 收集 RichText 里出现过的所有 token 颜色。
+    Set<Color> tokenColors(WidgetTester tester) {
+      // 代码块里还有语言角标这类普通 Text（同样是 RichText），只看带子
+      // span 的那一个——高亮后的代码正文被拆成了多个 token span。
+      final richTexts = tester.widgetList<RichText>(
+        find.descendant(
+          of: find.byType(MarkdownCodeBlock),
+          matching: find.byType(RichText),
+        ),
+      );
+      final code = richTexts.firstWhere(
+        (widget) =>
+            widget.text is TextSpan && ((widget.text as TextSpan).children?.length ?? 0) > 0,
+      );
+      final colors = <Color>{};
+      void visit(InlineSpan span) {
+        if (span is! TextSpan) return;
+        final text = span.text;
+        final color = span.style?.color;
+        if (text != null && text.trim().isNotEmpty && color != null) {
+          colors.add(color);
+        }
+        for (final child in span.children ?? const <InlineSpan>[]) {
+          visit(child);
+        }
+      }
+
+      visit(code.text);
+      return colors;
+    }
+
+    testWidgets('Python 代码渲染出多种颜色的 token（不再是单色）', (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          '```python\n'
+          'def greet(name):\n'
+          '    return f"hi {name}"  # 注释\n'
+          '```',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 关键字 / 字符串 / 注释 至少落到 3 种不同颜色上。
+      expect(tokenColors(tester).length, greaterThanOrEqualTo(3));
+    });
+
+    testWidgets('未知语言仍是单色，且正文完整显示', (tester) async {
+      await tester.pumpWidget(
+        _wrap('```wubalubadubdub\nsome plain text here\n```'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('some plain text here', findRichText: true),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('高亮不改变正文：复制出来仍是原始代码', (tester) async {
+      final copied = _mockClipboard(tester);
+      await tester.pumpWidget(
+        _wrap('```js\nconst a = 1; // 注释\nconsole.log(a);\n```'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('js'));
+      await tester.pumpAndSettle();
+      expect(copied.single, 'const a = 1; // 注释\nconsole.log(a);');
+    });
+
+    testWidgets('深色主题用另一套高亮配色', (tester) async {
+      Future<Set<Color>> colorsIn(ThemeData theme) async {
+        await tester.pumpWidget(
+          ProviderScope(
+            child: MaterialApp(
+              theme: theme,
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: MarkdownView(
+                    content: '```python\ndef f(): pass  # c\n```',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        return tokenColors(tester);
+      }
+
+      final light = await colorsIn(AppTheme.light());
+      final dark = await colorsIn(AppTheme.dark());
+      expect(light.intersection(dark), isEmpty);
     });
   });
 

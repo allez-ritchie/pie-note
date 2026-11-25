@@ -6,6 +6,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../common/strings.dart';
+import 'markdown_code_highlight.dart';
 
 /// 围栏代码块没有写 info string 时显示的语言标签。
 const String kCodeBlockPlainLabel = 'text';
@@ -20,6 +21,11 @@ TextStyle markdownCodeBlockTextStyle(ThemeData theme) => TextStyle(
   height: 1.55,
   color: theme.colorScheme.onSurface,
 );
+
+/// 代码块底色。语法高亮那两套配色的对比度就是按它校验的
+/// （测试里会拿它算 WCAG 对比度，改这里必须同时改配色）。
+Color markdownCodeBlockBackground(ThemeData theme) =>
+    theme.colorScheme.surfaceContainerHighest;
 
 /// 取出围栏代码块的正文（去掉解析器补的行尾换行）。
 String markdownCodeBlockText(md.Element pre) {
@@ -110,12 +116,11 @@ class _MarkdownCodeBlockState extends State<MarkdownCodeBlock> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final label = _copied
         ? S.codeCopied
         : (widget.language.isEmpty ? kCodeBlockPlainLabel : widget.language);
     final block = Material(
-      color: scheme.surfaceContainerHighest,
+      color: markdownCodeBlockBackground(theme),
       clipBehavior: Clip.antiAlias,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
@@ -140,11 +145,7 @@ class _MarkdownCodeBlockState extends State<MarkdownCodeBlock> {
               // 只横向滚动：纵向滚动交给正文所在滚动区，避免长代码块里再套一层
               // 纵向滚动区把滚轮吃掉。
               padding: const EdgeInsets.fromLTRB(14, 2, 14, 12),
-              child: Text(
-                widget.code,
-                style: widget.textStyle,
-                softWrap: false,
-              ),
+              child: Text.rich(_highlightedSpan(theme), softWrap: false),
             ),
           ],
         ),
@@ -157,6 +158,26 @@ class _MarkdownCodeBlockState extends State<MarkdownCodeBlock> {
         return SizedBox(width: constraints.maxWidth, child: block);
       },
     );
+  }
+
+  /// 按语法把代码染成不同颜色的 [TextSpan]。
+  ///
+  /// 语言未知（没写 info string、写了本 App 未收录的语言、或代码过长）时
+  /// 退回单色等宽文本，保证任何输入都能正常显示。
+  TextSpan _highlightedSpan(ThemeData theme) {
+    // 基础样式已在 markdownCodeBlockTextStyle 里带上了前景色，高亮 token 的颜色
+    // 通过 TextStyle.merge 覆盖在它上面（只改颜色，字重/斜体保持主题设定）。
+    final baseStyle = widget.textStyle;
+    final spans = MarkdownCodeHighlighter.instance.spansFor(
+      widget.code,
+      widget.language,
+      baseStyle: baseStyle,
+      brightness: theme.brightness,
+    );
+    if (spans == null) {
+      return TextSpan(text: widget.code, style: baseStyle);
+    }
+    return TextSpan(style: baseStyle, children: spans);
   }
 }
 

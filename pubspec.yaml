@@ -21,6 +21,9 @@ dependencies:
   flutter_markdown_plus: ^1.0.12
   # Markdown AST（自定义围栏代码块构建器要读 pre/code 节点，见 markdown_code_block.dart）
   markdown: ^7.3.1
+  # 围栏代码块的语法高亮：highlight.js v11.9 的 Dart 移植（只用来分词，
+  # 结果由自己写的扁平 renderer 转成 TextSpan，见 markdown_code_highlight.dart）
+  re_highlight: ^0.0.3
   # Markdown 中的外链跳转浏览器（图片链接不处理）
   url_launcher: ^6.3.3
   cupertino_icons: ^1.0.9
