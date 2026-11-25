@@ -19,6 +19,8 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   # Markdown 渲染
   flutter_markdown_plus: ^1.0.12
+  # Markdown AST（自定义围栏代码块构建器要读 pre/code 节点，见 markdown_code_block.dart）
+  markdown: ^7.3.1
   # Markdown 中的外链跳转浏览器（图片链接不处理）
   url_launcher: ^6.3.3
   cupertino_icons: ^1.0.9

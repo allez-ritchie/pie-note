@@ -489,6 +489,34 @@ void main() {
     // 触摸指针被忽略：不会把上一段并进输入框。
     expect(controller.text, '第一段\n\n第二段');
   });
+
+  testWidgets('渲染态点按代码块主体就地展开该段源码（不是复制）', (tester) async {
+    final controller = TextEditingController(
+      text: '正文段落\n\n```python\nprint(1)\n```\n',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+
+    // 渲染态：代码块由 MarkdownCodeBlock 展示，语言角标可读，没有源码输入框。
+    expect(find.text('python'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.text('python'));
+    await tester.pumpAndSettle();
+    // 点语言按钮是「复制」，正文不该被改写、也不进入编辑态。
+    expect(find.byType(TextField), findsNothing);
+    expect(controller.text, contains('```python'));
+
+    // 点代码块主体：就地展开这一段源码（实时预览里必须还能编辑代码块）。
+    await tester.tap(find.textContaining('print(1)'));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '```python\nprint(1)\n```');
+    // 展开源码不改变正文，也不产生重复的代码内容。
+    expect(controller.text, '正文段落\n\n```python\nprint(1)\n```\n');
+  });
 }
 
 /// 模拟鼠标「按住左键从 [from] 拖到 [to]」。

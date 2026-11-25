@@ -47,6 +47,10 @@ class S {
   static const String tabSearch = '搜索';
   static const String tabSettings = '设置';
 
+  // Markdown 代码块
+  static const String copyCode = '复制代码';
+  static const String codeCopied = '已复制';
+
   // 来源 / 对话入口
   static const String openSources = '查看来源';
   static const String openChat = '与笔记本对话';

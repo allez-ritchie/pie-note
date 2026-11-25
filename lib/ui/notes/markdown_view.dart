@@ -8,6 +8,7 @@ import '../../state/workspace.dart';
 import '../common/navigation.dart';
 import '../home/workspace_navigator.dart';
 import 'editor_strings.dart';
+import 'markdown_code_block.dart';
 
 /// Markdown 预览。
 ///
@@ -15,6 +16,7 @@ import 'editor_strings.dart';
 /// - `[[标题]]` 会渲染成可点击的双链，点击后在全部笔记中按标题查找并跳转；
 /// - `![alt](url)` **不加载图片**，渲染为占位块（本仓库暂不处理图片链接）；
 /// - `http/https` 外链交给系统浏览器打开；
+/// - 围栏代码块由 [MarkdownCodeBlock] 渲染：等宽、右上角显示语言、点按复制；
 /// - 传入 [onToggleTask] 时，任务列表复选框可点击切换（预览时编辑）；
 /// - 传入 [onTapText] 时，点击渲染文本会回调（实时预览用来就地展开该段源码）。
 class MarkdownView extends ConsumerWidget {
@@ -25,6 +27,7 @@ class MarkdownView extends ConsumerWidget {
     this.onToggleTask,
     this.taskStartIndex = 0,
     this.selectable = false,
+    this.onTapCodeBlock,
   });
 
   final String content;
@@ -48,6 +51,11 @@ class MarkdownView extends ConsumerWidget {
   /// 独立文本组件，各自开选区就只能一段一段选、跨段复制不了；套在一个
   /// [SelectionArea] 里才能像网页一样连续选择并一次复制全文。
   final bool selectable;
+
+  /// 点按围栏代码块时的回调（实时预览用来就地展开该段源码）。
+  ///
+  /// 为空时点按代码块即为「复制代码」（阅读视图 / 对话 / 来源等只读场景）。
+  final VoidCallback? onTapCodeBlock;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -73,6 +81,13 @@ class MarkdownView extends ConsumerWidget {
                 onToggle: () => onToggleTask!(index),
               );
             },
+      // 围栏代码块：右上角语言角标 + 点按复制（等宽铺满正文，见组件注释）。
+      builders: {
+        'pre': MarkdownCodeBlockBuilder(
+          textStyle: markdownCodeBlockTextStyle(theme),
+          onTap: onTapCodeBlock,
+        ),
+      },
     );
     if (!selectable) return body;
     // 选中态：整个渲染树套一个 SelectionArea，段落之间可以连续选择、一次复制。
@@ -221,11 +236,12 @@ MarkdownStyleSheet buildMarkdownStyleSheet(ThemeData theme) {
       backgroundColor: scheme.surfaceContainerHighest,
       fontSize: 13,
     ),
-    codeblockDecoration: BoxDecoration(
-      color: scheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    codeblockPadding: const EdgeInsets.all(14),
+    // 围栏代码块（`pre`）的外层容器由 `MarkdownCodeBlock` 自己绘制底色与圆角
+    // （见 markdown_code_block.dart）。这里保持空装饰，避免包内再套一层同色
+    // 容器：两层圆角叠加会在四角留下细微的双重描边。
+    // 包内只在**没有**自定义 `pre` 构建器时才用这两项，因此留空是安全的。
+    codeblockDecoration: const BoxDecoration(),
+    codeblockPadding: EdgeInsets.zero,
     blockquote: theme.textTheme.bodyMedium?.copyWith(
       color: scheme.onSurfaceVariant,
       height: 1.6,
