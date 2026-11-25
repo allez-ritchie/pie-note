@@ -31,7 +31,7 @@
 技术栈：Flutter（Dart 3.x）+ Material 3，`http` 负责网络，`flutter_secure_storage`
 （Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存 Base URL
 等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`，
-直接读 Markdown AST（自定义围栏代码块构建器）用 `markdown`，
+直接读 Markdown AST（自定义围栏代码块构建器）用 `markdown`，围栏代码块语法高亮用 `re_highlight`，
 选择本地文件上传来源用 `file_selector`。
 
 > 本 App 的定位是**客户端**：不做离线笔记同步/冲突合并，不做本地数据库镜像。
@@ -186,7 +186,8 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、围栏代码块交给 `markdown_code_block.dart`。 |
-| `lib/ui/notes/markdown_code_block.dart` | 围栏代码块渲染：右上角语言角标 + 点按复制、等宽铺满正文、超宽行内部横向滚动。 |
+| `lib/ui/notes/markdown_code_block.dart` | 围栏代码块渲染：右上角语言角标 + 点按复制、等宽铺满正文、超宽行内部横向滚动；正文交给 `markdown_code_highlight.dart` 上色。 |
+| `lib/ui/notes/markdown_code_highlight.dart` | 围栏代码块的语法高亮：`re_highlight`（highlight.js v11.9 移植）分词 + 自写扁平 `TextSpan` 渲染器、内语言表、浅/深两套对比度校验过的配色、按代码内容做的 LRU 缓存。 |
 | `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`）。 |
 | `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转；自带折叠状态（单个标题 + 全部折叠/展开）。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
@@ -540,8 +541,12 @@ build(android): 放行局域网明文 HTTP 后端地址
 ## 8. 已知边界（非 bug）
 
 - **不做图片处理**：Markdown 中的 `![](path)` 不加载、不上传，按文本显示。
-- **代码块不做语法高亮**：只按等宽字体渲染（颜色统一走主题），不引入高亮依赖；
-  代码块也不折叠，超长代码块随正文滚动，超宽行在代码块内部横向滚动。
+- **代码块**：按语法高亮（`re_highlight` 分词 + 自写扁平 `TextSpan` 渲染器），
+  只收录常用语言（未收录语言与纯文本退回单色等宽），不折叠；超长代码块随正文滚动，
+  超宽行在代码块内部横向滚动。**不要**换成 `flutter_highlight`：它依赖的
+  `highlight` 0.7.0 停在 highlight.js 9.x（2021 年）且 SDK 约束仍是 `<3.0.0`；
+  也**不要**用 `re_highlight` 自带的 `TextSpanRenderer`：它输出深层嵌套 TextSpan，
+  3000 行代码渲染要 50 秒以上（见该文件的注释与测试）。
 - **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲，
   且跳转是「滚动到标题」而不是 Markdown 锚点链接。
 - **不做离线编辑**：断网时列表与笔记读取失败会提示错误，不提供本地缓存兜底。
