@@ -19,7 +19,7 @@
 - 支持笔记本浏览、笔记列表、笔记搜索、Markdown 渲染预览；
 - 笔记编辑页有**大纲视图**：按 ATX 标题生成层级大纲，宽窗口是右侧侧栏、窄窗口是底部面板，
   点标题可在实时预览 / 源码 / 阅读三视图里跳转（对应 Obsidian 的 Outline 核心）；
-  有子标题的条目带可旋转的折叠箭头，标题栏可「全部折叠 / 全部展开」；
+  有子标题的条目带可旋转的折叠箭头，标题栏的「全部折叠 / 全部展开」只保留图标；
 - **按可用宽高自适应横竖屏与桌面窗口**：窄屏单栏 + 底部悬浮胶囊工具栏，宽屏侧边导航 +
   「笔记本 / 笔记」双栏，编辑器在宽窗口下阅读视图左右分栏（渲染 + 源码对照）；
 - **多标签页工作区**：笔记本、搜索、设置与每篇笔记都是标签页；桌面端是 VSCode / Obsidian
@@ -31,6 +31,7 @@
 技术栈：Flutter（Dart 3.x）+ Material 3，`http` 负责网络，`flutter_secure_storage`
 （Android Keystore / Linux 系统密钥环 / Windows 凭据管理器）保存密码，`shared_preferences` 保存 Base URL
 等非敏感配置，状态管理用 `flutter_riverpod`，Markdown 渲染用 `flutter_markdown_plus`，
+直接读 Markdown AST（自定义围栏代码块构建器）用 `markdown`，
 选择本地文件上传来源用 `file_selector`。
 
 > 本 App 的定位是**客户端**：不做离线笔记同步/冲突合并，不做本地数据库镜像。
@@ -180,11 +181,12 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/state/workspace.dart` | 工作区状态：`WorkspaceTab` / `WorkspaceState` / `WorkspaceNotifier`（打开、激活、关闭、前进后退、会话绑定）。 |
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）；笔记的⋯菜单、多选与批量操作在 `notes_screen.dart`，移动目标选择在 `move_to_notebook_dialog.dart`。 |
 | `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、大纲跳转、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
-| `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落，该段就地变成无边框源码输入框，失焦自动收起（块级 Live Preview）。 |
+| `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落，该段就地变成无边框源码输入框，失焦自动收起（块级 Live Preview）；`header` 参数把笔记名放进同一个滚动区。 |
 | `lib/ui/notes/editor_scroll_tail.dart` | 正文滚动区末尾的「半个视口」留白：三个视图共用的 `EditorScrollTail` 与纯函数 `editorBottomInset`。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
-| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
+| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、围栏代码块交给 `markdown_code_block.dart`。 |
+| `lib/ui/notes/markdown_code_block.dart` | 围栏代码块渲染：右上角语言角标 + 点按复制、等宽铺满正文、超宽行内部横向滚动。 |
 | `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`）。 |
 | `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转；自带折叠状态（单个标题 + 全部折叠/展开）。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
@@ -352,6 +354,11 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    点任务复选框应立即勾选并标为「未保存」；
    保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱；
    保存成功的提示应是顶部半透明小横幅（不遮住底部编辑区、不拦截点击、自动消失）。
+   实时预览不再有「点按任意段落即可就地编辑…」这行提示；
+   笔记名（标题 + 保存状态行）与正文在同一个滚动区，滚到底时应完全滚出视口；
+   围栏代码块右上有语言角标（`python` / `text` 等），点角标或点整块复制源码，
+   角标就地变「已复制」；实时预览里点代码块主体应展开该段源码（不是复制）；
+   同一篇里两段代码块宽度一致（短块不会缩成半截）。
    正文末尾（三视图都一样）应留出约**半个视口**的空白：把笔记拖到最底部时，
    最后一行要能继续上滚到屏幕中间，而不是永远贴着页面下缘（参考 Obsidian）；
    短笔记不应因此凭空出现一大段可滚动留白（内容不足一屏时仍贴顶显示）。
@@ -533,6 +540,8 @@ build(android): 放行局域网明文 HTTP 后端地址
 ## 8. 已知边界（非 bug）
 
 - **不做图片处理**：Markdown 中的 `![](path)` 不加载、不上传，按文本显示。
+- **代码块不做语法高亮**：只按等宽字体渲染（颜色统一走主题），不引入高亮依赖；
+  代码块也不折叠，超长代码块随正文滚动，超宽行在代码块内部横向滚动。
 - **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲，
   且跳转是「滚动到标题」而不是 Markdown 锚点链接。
 - **不做离线编辑**：断网时列表与笔记读取失败会提示错误，不提供本地缓存兜底。
