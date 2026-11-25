@@ -1,5 +1,7 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 
 import 'editor_strings.dart';
 import 'markdown_blocks.dart';
@@ -55,6 +57,28 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   int? _activeStart;
   String _lastCommittedText = '';
 
+  /// 就地编辑框内部的拖选是否还在进行（按下到抬起之间）。
+  ///
+  /// 桌面端用鼠标「按住左键向上跨行拖动」时，[TextField] 自己的拖选手势只会
+  /// 在当前段的源码里选（输入框里只有这一段），指针移出输入框后选区就不再
+  /// 增长 —— 表现为「只能选中点击的那一行」。这里在拖选期间跟踪指针，越过
+  /// 上/下边界就把相邻段落并进编辑范围，再按整篇源码设置选区。
+  bool _draggingSelection = false;
+
+  /// 拖选是否已经「接管」：指针第一次越出输入框后由本组件负责更新选区。
+  ///
+  /// 框内的普通拖选仍然交给 [TextField] 自己（保留双击选词、连点选段等行为）。
+  bool _dragOwnsSelection = false;
+
+  /// 拖选锚点在**整篇源码**里的绝对偏移；用绝对偏移是因为拖过段落边界后
+  /// 就地输入框会被扩成「多段源码」，框内相对偏移会整体平移。
+  int? _dragAnchor;
+
+  /// 最近一次拖选指针的全局坐标，用于布局完成后再精修一次选区。
+  Offset? _lastDragPosition;
+
+  bool _refineScheduled = false;
+
   GlobalKey _keyForBlock(int start) =>
       _blockKeys.putIfAbsent(start, () => GlobalKey(debugLabel: 'block-$start'));
 
@@ -107,6 +131,9 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   }
 
   void _handleFocusChange() {
+    // 拖选期间合并段落会换掉就地输入框的 Key（起点变了），旧输入框销毁时
+    // 焦点会短暂丢失；这不是「点按别处收起」，不能据此收起编辑态。
+    if (_draggingSelection || _dragOwnsSelection) return;
     if (!_blockFocus.hasFocus && _activeStart != null) {
       _deactivate(scrollToTop: false);
     }
@@ -115,6 +142,7 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   /// 外部（或本组件内置复选框）改动了整篇正文：放弃当前段编辑，重新解析。
   void _deactivate({bool scrollToTop = true}) {
     if (_activeStart == null) return;
+    _resetDragState();
     setState(() {
       _activeStart = null;
       _lastCommittedText = '';
@@ -235,6 +263,200 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
     return true;
   }
 
+  // ---------------------------------------------------------------------------
+  // 跨段落拖选（桌面端鼠标/触控板）
+  // ---------------------------------------------------------------------------
+
+  /// 按下：进入「可能正在拖选」状态，并记下锚点在**整篇源码**里的绝对偏移。
+  ///
+  /// 用绝对偏移而不是输入框内的相对偏移：拖过段落边界时输入框会被扩成
+  /// 「多段源码」，框内相对偏移会整体平移，绝对偏移始终对应整篇正文。
+  void _handleInlinePointerDown(PointerDownEvent event) {
+    final start = _activeStart;
+    final editable = _renderEditable;
+    if (start == null || editable == null) {
+      _draggingSelection = false;
+      return;
+    }
+    _draggingSelection = true;
+    _dragOwnsSelection = false;
+    _lastDragPosition = event.position;
+    // 框架的拖选把「按下点」当作 base，这里用同一套换算得到锚点；
+    // 双击选词等会改写 base 的场景在接管时再按实际选区校正一次。
+    final press = editable.getPositionForPoint(event.position);
+    _dragAnchor = start + press.offset;
+  }
+
+  /// 输入框内的指针移动：越出输入框上下边界就把相邻段落并入编辑范围。
+  ///
+  /// [TextField] 自己的拖选只认自己的文本（就地展开时只有当前这一段），
+  /// 指针一出框选区就不再增长 —— 这正是「向上跨行只能选中点击的那一行」。
+  /// 越过边界后由本组件按「整篇正文」重算选区。
+  void _handleInlinePointerMove(PointerMoveEvent event) {
+    if (!_draggingSelection) return;
+    _lastDragPosition = event.position;
+    if (_dragAnchor == null) return;
+    final box = _blockFocus.context?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    if (!rect.inflate(2).contains(event.position)) {
+      if (!_dragOwnsSelection) {
+        // 接管：以当前实际选区的 base 为准（双击选词后 base 可能不在按下点）。
+        final selection = _blockController.selection;
+        final start = _activeStart;
+        if (start != null && selection.isValid) {
+          _dragAnchor = start + selection.baseOffset;
+        }
+        _dragOwnsSelection = true;
+      }
+      _expandEditingRangeTo(event.position);
+    }
+    if (_dragOwnsSelection) _scheduleSelectionRefine();
+  }
+
+  /// 松开：把选区交还给 [TextField] 自己管理。
+  void _handleInlinePointerUp() {
+    if (!_dragOwnsSelection) {
+      _resetDragState();
+      return;
+    }
+    // 松手前按指针位置再定一次，保证落在光标处的选区与最后一次移动一致。
+    _applySelectionFromPointer();
+    _resetDragState();
+  }
+
+  void _resetDragState() {
+    _draggingSelection = false;
+    _dragOwnsSelection = false;
+    _dragAnchor = null;
+    _lastDragPosition = null;
+  }
+
+  /// 按指针位置扩大就地输入框的编辑范围（向上并入前面的块、向下并入后面的块）。
+  ///
+  /// 输入框里因此变成「多段源码」，与用户预期的「选中的 Markdown 源码」一致；
+  /// 松手后沿用同一套 [_commitBlockEdit] 写回整篇正文，失焦时再收起。
+  ///
+  /// 扩展是**单调**的：合并范围只增不减，指针继续往同一个方向拖就继续并入相邻块，
+  /// 不会因为「当前编辑范围已经跨了几块」而把先前并入的块又丢出去。
+  void _expandEditingRangeTo(Offset globalPosition) {
+    final start = _activeStart;
+    if (start == null) return;
+    final document = widget.controller.text;
+    final blocks = splitMarkdownBlocks(document);
+    if (blocks.isEmpty) return;
+    final rangeStart = start;
+    final rangeEnd = start + _lastCommittedText.length;
+    // 当前编辑范围覆盖的块区间：范围两端一定落在块边界上（并块时按块边界取）。
+    final firstIndex = blocks.indexWhere((block) => block.start == rangeStart);
+    final lastIndex = blocks.indexWhere((block) => block.end == rangeEnd);
+    if (firstIndex < 0 || lastIndex < firstIndex) return;
+
+    // 指针落在哪一块：优先用渲染态块的矩形判断；落不进任何块（例如指针已经在
+    // 正文上方/下方很远）时按上下方向取与当前范围相邻的那一块。
+    var targetIndex = -1;
+    for (var i = 0; i < blocks.length; i++) {
+      if (i >= firstIndex && i <= lastIndex) continue;
+      final box = _keyForBlock(blocks[i].start).currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+      final rect = box.localToGlobal(Offset.zero) & box.size;
+      if (rect.contains(globalPosition)) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex < 0) {
+      if (globalPosition.dy < _fieldRect().top) {
+        for (var i = firstIndex - 1; i >= 0; i--) {
+          if (blocks[i].end <= rangeStart) {
+            targetIndex = i;
+            break;
+          }
+        }
+      } else {
+        for (var i = lastIndex + 1; i < blocks.length; i++) {
+          if (blocks[i].start >= rangeEnd) {
+            targetIndex = i;
+            break;
+          }
+        }
+      }
+    }
+    if (targetIndex < 0) return;
+    final first = firstIndex < targetIndex ? firstIndex : targetIndex;
+    final last = lastIndex > targetIndex ? lastIndex : targetIndex;
+    final mergedStart = blocks[first].start;
+    final merged = document.substring(mergedStart, blocks[last].end);
+    if (mergedStart == rangeStart && merged == _lastCommittedText) return;
+    // 先同步活动段与期望文本，再写输入框：写输入框会触发 [_commitBlockEdit]，
+    // 此时两者一致，监听器直接返回，不会把刚合并的正文覆盖掉。
+    _activeStart = mergedStart;
+    _lastCommittedText = merged;
+    final anchor = _dragAnchor;
+    _blockController.value = TextEditingValue(
+      text: merged,
+      selection: TextSelection(
+        baseOffset: (anchor == null ? 0 : anchor - mergedStart).clamp(0, merged.length),
+        extentOffset: _pointerOffsetIn(merged),
+      ),
+    );
+    if (mounted) setState(() {});
+    // 合并后编辑框的 Key 换成了新的起点：重建后的输入框要把焦点接回来，
+    // 否则下一次移动/按键就落到别处，编辑态会随失焦被收起。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_draggingSelection) return;
+      if (!_blockFocus.hasFocus) _blockFocus.requestFocus();
+    });
+  }
+
+  /// 就地输入框的全局矩形（取不到时给一个空矩形，按「指针在框下方」处理）。
+  Rect _fieldRect() {
+    final box = _blockFocus.context?.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      return box.localToGlobal(Offset.zero) & box.size;
+    }
+    return Rect.zero;
+  }
+
+  /// 指针在就地输入框文本里的落点；指针在框外时由框架夹到首/尾。
+  int _pointerOffsetIn(String text) {
+    final position = _lastDragPosition;
+    final editable = _renderEditable;
+    if (position == null || editable == null) return text.length;
+    return editable.getPositionForPoint(position).offset.clamp(0, text.length);
+  }
+
+  /// 下一帧按指针位置重算选区。
+  ///
+  /// 合并段落会改变输入框高度与折行，同一帧内算出来的偏移已经不准；
+  /// 而且要排在框架自己的拖选更新之后，否则会被它覆盖掉。
+  void _scheduleSelectionRefine() {
+    if (_refineScheduled) return;
+    _refineScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refineScheduled = false;
+      if (!mounted || !_dragOwnsSelection) return;
+      _applySelectionFromPointer();
+    });
+  }
+
+  void _applySelectionFromPointer() {
+    final start = _activeStart;
+    if (start == null) return;
+    final text = _blockController.text;
+    final anchor = _dragAnchor;
+    final selection = TextSelection(
+      baseOffset: (anchor == null ? 0 : anchor - start).clamp(0, text.length),
+      extentOffset: _pointerOffsetIn(text),
+    );
+    if (selection == _blockController.selection) return;
+    _blockController.value = TextEditingValue(text: text, selection: selection);
+  }
+
+  RenderEditable? get _renderEditable => _blockFocus.context
+      ?.findAncestorStateOfType<EditableTextState>()
+      ?.renderEditable;
+
   /// 在最新分块里找回被点击的段落。
   ///
   /// 依次尝试：起始偏移 + 文本都没变 → 文本唯一匹配（前面段落长度变化只会让
@@ -311,31 +533,57 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   Widget build(BuildContext context) {
     final blocks = splitMarkdownBlocks(widget.controller.text);
     final active = _activeStart;
+    // 就地编辑框覆盖的源码区间：通常就是「一个块」，但桌面端跨段拖选会把相邻
+    // 块并进同一个输入框，此时区间覆盖多个块，这些块不能再各自渲染一遍
+    // （否则源码和渲染副本会同时出现在正文里）。
+    final editEnd = active == null ? null : active + _lastCommittedText.length;
+    final liveBlocks = active == null
+        ? const <MarkdownBlock>[]
+        : blocks
+              .where(
+                (block) =>
+                    block.start < editEnd! && block.end > active,
+              )
+              .toList();
+    final liveBlock = liveBlocks.isEmpty ? null : liveBlocks.first;
     // 正在编辑的段可能刚被删空：空块不会出现在分块结果里，但输入框必须留着，
     // 否则焦点随块一起消失、后续退格就再也删不动上一行（Android 上必现）。
     // 这类「空段」按纯插入位置渲染在相邻两块之间。
-    final liveBlock = active == null
-        ? null
-        : blocks.where((block) => block.start <= active && active < block.end).firstOrNull;
-    final pendingOffset = active != null && liveBlock == null ? active : null;
+    final pendingOffset = active != null && liveBlocks.isEmpty ? active : null;
 
     // 正文被改写后偏移量会整体变化，清掉已经不存在的块的 Key，避免 Map 无限增长。
     final starts = {for (final block in blocks) block.start};
     if (pendingOffset != null) starts.add(pendingOffset);
     _blockKeys.removeWhere((start, _) => !starts.contains(start));
 
+    // 编辑框里的源码（区间可能跨多个块，取整篇正文里对应的片段）。
+    final liveText = liveBlock == null
+        ? ''
+        : widget.controller.text.substring(
+            liveBlock.start,
+            (editEnd ?? liveBlock.end).clamp(liveBlock.start, widget.controller.text.length),
+          );
+    final liveStarts = {for (final block in liveBlocks) block.start};
+
     final children = <Widget>[];
     var insertedPending = false;
+    var insertedEditor = false;
     for (var index = 0; index < blocks.length; index++) {
       if (pendingOffset != null && !insertedPending && blocks[index].start > pendingOffset) {
         children.add(_buildInlineEditor(start: pendingOffset, text: ''));
         insertedPending = true;
       }
-      if (liveBlock != null && blocks[index].start == liveBlock.start) {
-        children.add(_buildInlineEditor(start: liveBlock.start, text: liveBlock.text));
-      } else {
-        children.add(_buildRenderedBlock(index, blocks[index]));
+      // 被编辑区间覆盖的块只在区间起点渲染一次输入框，其余块整体跳过。
+      if (liveStarts.contains(blocks[index].start)) {
+        if (!insertedEditor) {
+          children.add(
+            _buildInlineEditor(start: liveBlock!.start, text: liveText),
+          );
+          insertedEditor = true;
+        }
+        continue;
       }
+      children.add(_buildRenderedBlock(index, blocks[index]));
     }
     if (pendingOffset != null && !insertedPending) {
       children.add(_buildInlineEditor(start: pendingOffset, text: ''));
@@ -413,6 +661,11 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
   /// 与渲染块共用同一位置、没有边框/底色/标题栏，也没有「完成」按钮：
   /// 界面只会看到这一段的 Markdown 源码，失焦（点按别处）即自动收起。
   /// 标题块要按渲染态同样的数值补上上边距，否则点按标题时正文会上下跳动。
+  ///
+  /// 外面套一层 [Listener] 监听指针移动：桌面端按住左键向上/向下拖出输入框时，
+  /// [TextField] 只管自己那段文本，指针出框后选区不再增长（表现为「只能选中
+  /// 点击的那一行」）。越过边界后由 [_handleInlinePointerMove] 把相邻段落并入
+  /// 编辑范围，选区随之覆盖整段源码。
   Widget _buildInlineEditor({required int start, required String text}) {
     final headingLevel = markdownLeadingHeadingLevel(text);
     final topSpacing = headingLevel == null
@@ -420,32 +673,51 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
         : markdownHeadingTopSpacing(headingLevel);
     return Padding(
       padding: EdgeInsets.only(top: topSpacing),
-      child: TextField(
-        key: _keyForBlock(start),
-        controller: _blockController,
-        focusNode: _blockFocus,
-        maxLines: null,
-        minLines: 1,
-        autofocus: true,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        // 默认实现只在桌面端「点按外部」时失焦，移动端触摸不会。这里统一收起，
-        // 保证任何平台上点别处都能自然退出源码态；工具条包在
-        // [TextFieldTapRegion] 里，点它不算「外部」。
-        onTapOutside: (_) => _blockFocus.unfocus(),
-        style: const TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 14.5,
-          height: 1.6,
-        ),
-        decoration: const InputDecoration(
-          hintText: EditorStrings.contentHint,
-          filled: false,
-          isDense: true,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(vertical: 2),
+      child: Listener(
+        // 触摸端由长按 + 拖拽手柄选词，越界扩展没有意义，因此只接管鼠标/触控板；
+        // 指针事件不参与手势竞技场，加在 Listener 上不会抢走 TextField 的拖选。
+        onPointerMove: (event) {
+          switch (event.kind) {
+            case PointerDeviceKind.mouse:
+            case PointerDeviceKind.trackpad:
+            case PointerDeviceKind.stylus:
+            case PointerDeviceKind.invertedStylus:
+              _handleInlinePointerMove(event);
+            case PointerDeviceKind.touch:
+            case PointerDeviceKind.unknown:
+              break;
+          }
+        },
+        onPointerDown: (event) => _handleInlinePointerDown(event),
+        onPointerUp: (_) => _handleInlinePointerUp(),
+        onPointerCancel: (_) => _handleInlinePointerUp(),
+        child: TextField(
+          key: _keyForBlock(start),
+          controller: _blockController,
+          focusNode: _blockFocus,
+          maxLines: null,
+          minLines: 1,
+          autofocus: true,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          // 默认实现只在桌面端「点按外部」时失焦，移动端触摸不会。这里统一收起，
+          // 保证任何平台上点别处都能自然退出源码态；工具条包在
+          // [TextFieldTapRegion] 里，点它不算「外部」。
+          onTapOutside: (_) => _blockFocus.unfocus(),
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 14.5,
+            height: 1.6,
+          ),
+          decoration: const InputDecoration(
+            hintText: EditorStrings.contentHint,
+            filled: false,
+            isDense: true,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: EdgeInsets.symmetric(vertical: 2),
+          ),
         ),
       ),
     );

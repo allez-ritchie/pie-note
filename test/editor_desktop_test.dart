@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -89,6 +90,89 @@ void main() {
     await _switchToReading(tester);
 
     expect(find.text(EditorStrings.paneSource), findsNothing);
+  });
+
+  testWidgets('实时预览向上跨行拖动后复制，得到整段 Markdown 源码', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 820);
+    addTearDown(tester.view.reset);
+
+    final requests = <http.BaseRequest>[];
+    final client = ApiClient(
+      baseUrl: 'http://127.0.0.1:5055',
+      password: 'pw',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return _json({
+          'id': 'note:demo',
+          'title': '选区演示',
+          // 两段带行内标记的源码：复制结果里必须保留 `**` 等 Markdown 原文。
+          'content': '# 标题\n\n第一段**加粗**正文\n\n第二段**加粗**正文\n',
+          'note_type': 'human',
+          'updated': '2026-11-25 03:00:00+00:00',
+        });
+      }),
+    );
+    addTearDown(client.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiClientProvider.overrideWithValue(client)],
+        child: const MaterialApp(home: NoteEditorScreen(noteId: 'note:demo')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 点开第二段（渲染态里 `**` 不显示），再按住左键向上拖过第一段。
+    await tester.tap(find.textContaining('第二段加粗正文'));
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(find.byType(TextField).last);
+    final gesture = await tester.startGesture(
+      Offset(rect.left + 120, rect.bottom - 8),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    final target = Offset(rect.left + 40, rect.top - 80);
+    for (var i = 1; i <= 20; i++) {
+      await gesture.moveTo(
+        Offset(
+          rect.left + 120,
+          rect.bottom - 8 - (rect.bottom - 8 - target.dy) * i / 20,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    // 复制选区：内容应是 Markdown 源码（带 `**`），且跨过段间空行。
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied, isNotNull);
+    expect(copied, contains('**加粗**'));
+    expect(copied, contains('第二段'));
+    // 复制本身不会改正文，也不应产生保存请求。
+    expect(requests.where((r) => r.method == 'PUT'), isEmpty);
   });
 
   testWidgets('Ctrl+S 直接保存，无需点按钮', (tester) async {

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -317,6 +318,194 @@ void main() {
     expect(controller.text, contains('- [x] 任务 C'));
     expect(find.textContaining('正文段落'), findsWidgets);
   });
+
+  // ---------------------------------------------------------------------------
+  // 桌面端跨段落拖选：鼠标按住左键向上/向下拖出就地输入框时，
+  // 选区要覆盖整段 Markdown 源码，而不是只剩「点击的那一行」。
+  // ---------------------------------------------------------------------------
+
+  testWidgets('鼠标向上拖出输入框：选区跨段落覆盖整段源码', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(700, 900);
+    addTearDown(tester.view.reset);
+    final controller = TextEditingController(
+      text: '第一段\n\n第二段\n\n第三段',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+    // 点开最后一段，再从它末尾按住左键向上拖到第一段上方。
+    await tester.tap(find.text('第三段'));
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(find.byType(TextField));
+    await _mouseDrag(
+      tester,
+      from: Offset(rect.left + 60, rect.bottom - 8),
+      to: Offset(rect.left + 40, rect.top - 60),
+      steps: 20,
+    );
+
+    // 输入框里现在是并起来的多段源码，选区从第一段中间到第三段末尾。
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '第一段\n\n第二段\n\n第三段');
+    final selection = field.controller!.selection;
+    expect(selection.isValid, isTrue);
+    expect(selection.isCollapsed, isFalse);
+    final selected = field.controller!.text.substring(
+      selection.start,
+      selection.end,
+    );
+    // 跨过段间空行、覆盖到第二段（修复前只能选中点击的那一段）。
+    expect(selected, contains('第二段'));
+    expect(selected, isNot(selected.trim()));
+
+    // 跨段源码虽然进了同一个输入框，整篇正文不会被重复写入。
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    expect(controller.text, '第一段\n\n第二段\n\n第三段');
+  });
+
+  testWidgets('鼠标向下拖出输入框：选区跨段落覆盖整段源码', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(700, 900);
+    addTearDown(tester.view.reset);
+    final controller = TextEditingController(
+      text: '第一段\n\n第二段\n\n第三段',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第一段'));
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(find.byType(TextField));
+    await _mouseDrag(
+      tester,
+      from: Offset(rect.left + 20, rect.top + 6),
+      to: Offset(rect.left + 60, rect.bottom + 80),
+      steps: 20,
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, '第一段\n\n第二段\n\n第三段');
+    final selection = field.controller!.selection;
+    expect(selection.isCollapsed, isFalse);
+    expect(
+      field.controller!.text.substring(selection.start, selection.end),
+      contains('第二段'),
+    );
+  });
+
+  testWidgets('连续拖过多段时合并范围只增不减', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(700, 900);
+    addTearDown(tester.view.reset);
+    final controller = TextEditingController(
+      text: '第一段\n\n第二段\n\n第三段\n\n第四段',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第四段'));
+    await tester.pumpAndSettle();
+    final first = tester.getRect(find.text('第一段'));
+    final rect = tester.getRect(find.byType(TextField));
+    await _mouseDrag(
+      tester,
+      from: Offset(rect.left + 40, rect.bottom - 6),
+      to: Offset(first.left + 10, first.top - 4),
+      steps: 40,
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    // 四段全部并进同一个输入框，中间没有被「掉出去」的段落。
+    expect(
+      field.controller!.text,
+      '第一段\n\n第二段\n\n第三段\n\n第四段',
+    );
+    final selected = field.controller!.text.substring(
+      field.controller!.selection.start,
+      field.controller!.selection.end,
+    );
+    expect(selected, contains('第二段'));
+    expect(selected, contains('第三段'));
+  });
+
+  testWidgets('框内向上拖选仍只改选区，不并块（不进入跨段模式）', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(700, 900);
+    addTearDown(tester.view.reset);
+    final controller = TextEditingController(
+      text: '第一行\n第二行\n第三行\n\n下一段',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('第三行'));
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(find.byType(TextField));
+    await _mouseDrag(
+      tester,
+      from: Offset(rect.left + 40, rect.bottom - 10),
+      to: Offset(rect.left + 40, rect.top + 10),
+      steps: 16,
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    // 只在当前块内选择：输入框文本仍是点击的那一段。
+    expect(field.controller!.text, '第一行\n第二行\n第三行');
+    expect(field.controller!.selection.isCollapsed, isFalse);
+    expect(controller.text, '第一行\n第二行\n第三行\n\n下一段');
+  });
+
+  testWidgets('触摸拖选不触发跨段合并（移动端保持原有长按选词）', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(700, 900);
+    addTearDown(tester.view.reset);
+    final controller = TextEditingController(text: '第一段\n\n第二段');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_wrap(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第二段'));
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(find.byType(TextField));
+    final gesture = await tester.startGesture(
+      Offset(rect.left + 40, rect.bottom - 8),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    for (var i = 1; i <= 12; i++) {
+      await gesture.moveTo(
+        Offset(rect.left + 40, rect.bottom - 8 - (rect.height + 60) * i / 12),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    // 触摸指针被忽略：不会把上一段并进输入框。
+    expect(controller.text, '第一段\n\n第二段');
+  });
+}
+
+/// 模拟鼠标「按住左键从 [from] 拖到 [to]」。
+Future<void> _mouseDrag(
+  WidgetTester tester, {
+  required Offset from,
+  required Offset to,
+  int steps = 12,
+}) async {
+  final gesture = await tester.startGesture(from, kind: PointerDeviceKind.mouse);
+  await tester.pump(const Duration(milliseconds: 20));
+  for (var i = 1; i <= steps; i++) {
+    await gesture.moveTo(Offset.lerp(from, to, i / steps)!);
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 /// 测试内联版「第 N 个任务项方括号内字符」偏移（与 MarkdownTasks 同语义）。
