@@ -27,6 +27,8 @@ class LivePreviewEditor extends StatefulWidget {
     this.onToggleTask,
     this.onBlockActivated,
     this.jump,
+    this.header,
+    this.empty,
   });
 
   /// 整篇笔记正文的控制器（与源码模式共用）。
@@ -40,6 +42,18 @@ class LivePreviewEditor extends StatefulWidget {
 
   /// 大纲跳转请求：滚动到该偏移量所在段落。
   final OutlineJumpRequest? jump;
+
+  /// 正文滚动区顶部的头部（笔记标题 + 保存状态行）。
+  ///
+  /// 放在滚动区**内容**里而不是固定在顶部：滚轮 / 上划时标题要随正文一起
+  /// 滚走，不能常驻占住半屏（参考 Obsidian）。
+  final Widget? header;
+
+  /// 正文为空时的占位内容（滚动区里、头部下方显示）。
+  ///
+  /// 不能像以前那样在「空正文」时整块替换掉本组件：标题输入框在
+  /// [header] 里，替掉它就等于新建草稿时没有标题可填了。
+  final Widget? empty;
 
   @override
   State<LivePreviewEditor> createState() => _LivePreviewEditorState();
@@ -592,17 +606,33 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
     final editing = liveBlock != null || pendingOffset != null;
 
     if (children.isEmpty && !editing) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            EditorStrings.emptyPreview,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+      // 正文为空：保留头部（标题输入框），只在下方显示空正文占位。
+      if (widget.empty == null && widget.header == null) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              EditorStrings.emptyPreview,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
-        ),
+        );
+      }
+      children.add(
+        widget.empty ??
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Text(
+                EditorStrings.emptyPreview,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
       );
     }
     return Column(
@@ -625,7 +655,11 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: children,
+                  children: [
+                    // 标题与保存状态随正文一起滚动（参考 Obsidian：不常驻固定）。
+                    if (widget.header != null) widget.header!,
+                    ...children,
+                  ],
                 ),
               ),
             ),
@@ -657,6 +691,9 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
           taskStartIndex: block.taskOffset,
           onTapText: () => _activate(index, block),
           onToggleTask: _toggleTask,
+          // 代码块在渲染态也要能点开源码：不传回调时组件会把点按当作「复制」，
+          // 实时预览里就再也编辑不了代码块了。
+          onTapCodeBlock: () => _activate(index, block),
         ),
       ),
     );

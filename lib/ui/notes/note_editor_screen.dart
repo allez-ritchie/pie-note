@@ -921,28 +921,65 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Expanded(
+          child: switch (_viewMode) {
+            EditorViewMode.live => _buildLivePreview(),
+            EditorViewMode.source => _buildEditor(scheme),
+            EditorViewMode.reading =>
+              _splitPane ? _buildReadingSplit() : _buildPreview(),
+          },
+        ),
+        if (_viewMode == EditorViewMode.source)
+          MarkdownToolbar(controller: _contentController, focusNode: _contentFocus),
+      ],
+    );
+  }
+
+  /// 笔记标题 + 保存状态 + 字数统计。
+  ///
+  /// 这个头部放在**正文滚动区内部**（而不是固定在页面顶部）：滚轮滚走时标题
+  /// 与状态行也一起滚出视口，长笔记因此能多看到几行正文（参考 Obsidian）。
+  /// 水平内边距由父级滚动区统一提供（三个视图都是 20），这里只负责纵向间距。
+  ///
+  /// [editable] 为 false（阅读视图）时标题渲染成纯文本：阅读视图是只读的，
+  /// 而且 [TextField] 放进 [SelectionArea] 里会和整页选区抢手势。
+  Widget _buildNoteHeader(ColorScheme scheme, {required bool editable}) {
+    final titleStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final onSurfaceVariant = Theme.of(
+      context,
+    ).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-          child: TextField(
-            controller: _titleController,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
+          padding: const EdgeInsets.only(top: 16),
+          child: editable
+              ? TextField(
+                  controller: _titleController,
+                  style: titleStyle,
+                  textInputAction: TextInputAction.next,
+                  maxLines: null,
+                  decoration: InputDecoration(
+                    hintText: EditorStrings.titleHint,
+                    filled: false,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                  ),
+                )
+              : Text(
+                  _titleController.text.trim().isEmpty
+                      ? EditorStrings.untitled
+                      : _titleController.text.trim(),
+                  style: titleStyle,
                 ),
-            textInputAction: TextInputAction.next,
-            maxLines: null,
-            decoration: InputDecoration(
-              hintText: EditorStrings.titleHint,
-              filled: false,
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-            ),
-          ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+          padding: const EdgeInsets.only(top: 6, bottom: 10),
           child: Row(
             children: [
               if (_dirty) ...[
@@ -957,18 +994,16 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
                 const SizedBox(width: 6),
                 Text(
                   EditorStrings.unsavedBadge,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: scheme.primary,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: scheme.primary),
                 ),
               ] else
                 Text(
                   _lastSavedAt == null
                       ? EditorStrings.neverSaved
                       : '${EditorStrings.savedAt} ${Formatters.dateTime(_lastSavedAt)}',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                  style: onSurfaceVariant,
                 ),
               const Spacer(),
               // 实时预览的就地编辑不会逐字符重建本页，用监听保证字数实时。
@@ -976,25 +1011,13 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
                 listenable: _contentController,
                 builder: (context, _) => Text(
                   EditorStrings.charCount(_contentController.text.length),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                  style: onSurfaceVariant,
                 ),
               ),
             ],
           ),
         ),
         const Divider(height: 1),
-        Expanded(
-          child: switch (_viewMode) {
-            EditorViewMode.live => _buildLivePreview(),
-            EditorViewMode.source => _buildEditor(scheme),
-            EditorViewMode.reading =>
-              _splitPane ? _buildReadingSplit() : _buildPreview(),
-          },
-        ),
-        if (_viewMode == EditorViewMode.source)
-          MarkdownToolbar(controller: _contentController, focusNode: _contentFocus),
       ],
     );
   }
@@ -1012,32 +1035,39 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       innerBottom: 16,
       builder: (context, metrics) => SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(20, 0, 20, metrics.bottomInset),
-        child: ConstrainedBox(
-          // 内容比视口短时输入框也铺满整屏：点空白处同样能聚焦继续写。
-          constraints: BoxConstraints(minHeight: metrics.viewportExtent),
-          child: TextField(
-            controller: _contentController,
-            focusNode: _contentFocus,
-            maxLines: null,
-            // 输入框随正文长高，内部不再滚动（滚动交给外层），
-            // 光标移动时框架会把它滚进外层视口。
-            textAlignVertical: TextAlignVertical.top,
-            keyboardType: TextInputType.multiline,
-            style: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 14.5,
-              height: 1.65,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 标题与状态行随正文一起滚动，不吸附在页面顶部。
+            _buildNoteHeader(scheme, editable: true),
+            ConstrainedBox(
+              // 内容比视口短时输入框也铺满整屏：点空白处同样能聚焦继续写。
+              constraints: BoxConstraints(minHeight: metrics.viewportExtent),
+              child: TextField(
+                controller: _contentController,
+                focusNode: _contentFocus,
+                maxLines: null,
+                // 输入框随正文长高，内部不再滚动（滚动交给外层），
+                // 光标移动时框架会把它滚进外层视口。
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 14.5,
+                  height: 1.65,
+                ),
+                decoration: InputDecoration(
+                  hintText: EditorStrings.contentHint,
+                  filled: false,
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
             ),
-            decoration: InputDecoration(
-              hintText: EditorStrings.contentHint,
-              filled: false,
-              isDense: true,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -1053,42 +1083,17 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
 
   /// 实时预览：渲染态 + 点按段落就地编辑。
   ///
-  /// 正文为空（例如新建笔记）时没有可点按的段落，展示「开始书写」入口，
-  /// 点击进入源码模式；不随内容自动切换，避免输入首字时界面跳变、光标丢失。
+  /// 正文为空（例如新建笔记）时没有可点按的段落，在标题下方展示「开始书写」
+  /// 入口，点击进入源码模式；不随内容自动切换，避免输入首字时界面跳变、光标丢失。
   Widget _buildLivePreview() {
-    if (_contentController.text.trim().isEmpty) {
-      return _EmptyDraftPrompt(onStart: _startWriting);
-    }
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-          child: Row(
-            children: [
-              Icon(Icons.touch_app_rounded, size: 15, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  EditorStrings.liveHint,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: LivePreviewEditor(
-            controller: _contentController,
-            onToggleTask: _toggleTask,
-            onBlockActivated: (block) => _syncActiveHeading(block.start),
-            jump: _outlineJump,
-          ),
-        ),
-      ],
+    final empty = _contentController.text.trim().isEmpty;
+    return LivePreviewEditor(
+      controller: _contentController,
+      onToggleTask: _toggleTask,
+      onBlockActivated: (block) => _syncActiveHeading(block.start),
+      jump: _outlineJump,
+      header: _buildNoteHeader(Theme.of(context).colorScheme, editable: true),
+      empty: empty ? _EmptyDraftPrompt(onStart: _startWriting) : null,
     );
   }
 
@@ -1149,17 +1154,26 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
 
   Widget _buildPreview() {
     final content = _contentController.text;
+    final scheme = Theme.of(context).colorScheme;
     if (content.trim().isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            EditorStrings.emptyPreview,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
+      // 空笔记也要能看到笔记名（它同样随滚动区走），下方提示正文为空。
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildNoteHeader(scheme, editable: false),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              child: Text(
+                EditorStrings.emptyPreview,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -1177,10 +1191,14 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
         child: EditorScrollTail(
           base: 40,
           builder: (context, metrics) => SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(20, 16, 20, metrics.bottomInset),
+            padding: EdgeInsets.fromLTRB(20, 0, 20, metrics.bottomInset),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // 阅读视图是只读的：标题渲染成纯文本（放进 TextField 会与
+                // 整页 SelectionArea 抢手势），同样随正文一起滚走。
+                _buildNoteHeader(scheme, editable: false),
+                const SizedBox(height: 16),
                 for (var i = 0; i < sections.length; i++)
                   Padding(
                     // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
