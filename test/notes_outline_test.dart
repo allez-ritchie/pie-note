@@ -336,6 +336,54 @@ void main() {
     expect(_inOutline('乙'), findsOneWidget);
   });
 
+  testWidgets('CRLF 行尾的标题也出现在大纲里（混用行尾不丢最后几个 H4）', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1400, 900);
+    addTearDown(tester.view.reset);
+
+    // 复现「2026年11月工作记录」：正文前段是 LF，最后几条 H4 是 CRLF。
+    // 旧解析用 `[ \t]*$` 收尾，Dart 的 `$` 不允许在 `\r` 前结束匹配，
+    // 这几个 CRLF 标题会被整行丢掉。
+    const content = '# 11-24\r\n\n'
+        '## 1.调试开发板\n\n'
+        '#### 1.第一条 LF 结论\n\n'
+        '正文\n\n'
+        '#### 2.第二条 CRLF 结论\r\n\n'
+        '正文\r\n\n'
+        '#### 3.第三条 CRLF 结论\r\n';
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              baseUrl: 'http://127.0.0.1:5055',
+              password: 'pw',
+              httpClient: MockClient(
+                (request) async => _json({
+                  'id': 'note:crlf',
+                  'title': '混用行尾的笔记',
+                  'content': content,
+                  'note_type': 'human',
+                }),
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: NoteEditorScreen(noteId: 'note:crlf')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openOutline(tester);
+
+    expect(find.text(EditorStrings.outlineCount(5)), findsOneWidget);
+    expect(find.text('H4'), findsNWidgets(3));
+    expect(_inOutline('2.第二条 CRLF 结论'), findsOneWidget);
+    expect(_inOutline('3.第三条 CRLF 结论'), findsOneWidget);
+    // 展示文本不带行尾 `\r`。
+    expect(find.textContaining('\r'), findsNothing);
+  });
+
   testWidgets('没有标题的笔记显示大纲空状态', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1400, 900);

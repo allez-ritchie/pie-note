@@ -59,6 +59,80 @@ void main() {
       expect(parseMarkdownHeadings('  \n\n'), isEmpty);
       expect(parseMarkdownHeadings('正文\n\n- 列表\n'), isEmpty);
     });
+
+    test('CRLF 行尾（残留 \\r）的标题仍然进大纲，text 不含 \\r', () {
+      // 正文混用 CRLF 时按 `\n` 切开会在行尾留下 `\r`：Dart 的 `$` 不允许在
+      // `\r` 前结束匹配，早期实现会把这类标题整行丢掉。
+      const markdown = '#### 带 CRLF 的四级标题\r\n\n正文\r\n\n### LF 的三级标题\n';
+      final headings = parseMarkdownHeadings(markdown);
+
+      expect(headings.map((h) => h.level), [4, 3]);
+      expect(headings.map((h) => h.text), ['带 CRLF 的四级标题', 'LF 的三级标题']);
+      for (final heading in headings) {
+        expect(heading.text.contains('\r'), isFalse);
+        expect(heading.raw.contains('\r'), heading.text == '带 CRLF 的四级标题');
+        // 偏移量语义不变：raw 仍按原行长度（含 `\r`）切出来。
+        expect(markdown.substring(heading.offset, heading.end), heading.raw);
+      }
+      // textStart 指向标题正文（`#` 与空格之后），而不是 `\r` 之后。
+      expect(headings.first.textStart, markdown.indexOf('带 CRLF'));
+    });
+
+    test('混用 CRLF/LF 的正文里，CRLF 的尾部标题不会漏掉', () {
+      // 复现「2026年11月工作记录」的形状：正文前段是 LF，最后几个 H4 是 CRLF。
+      const markdown = '# 11-24\n\n'
+          '## 1.调试开发板\n\n'
+          '### 1.检查驱动代码\n\n'
+          '#### 1.LF 行尾的结论\n\n'
+          '```text\n'
+          'code\r\n'
+          '```\n\n'
+          '#### 2.CRLF 行尾的结论\r\n\n'
+          '正文\r\n\n'
+          '#### 3.另一个 CRLF 行尾的结论\r\n\n'
+          '#### 4.最后一个 CRLF 行尾的结论\r\n';
+      final headings = parseMarkdownHeadings(markdown);
+
+      expect(headings.map((h) => h.text), [
+        '11-24',
+        '1.调试开发板',
+        '1.检查驱动代码',
+        '1.LF 行尾的结论',
+        '2.CRLF 行尾的结论',
+        '3.另一个 CRLF 行尾的结论',
+        '4.最后一个 CRLF 行尾的结论',
+      ]);
+      expect(headings.map((h) => h.level), [1, 2, 3, 4, 4, 4, 4]);
+      // 最后三条正是 CRLF 行尾的那几个：以前会被整行丢掉。
+      expect(
+        headings.skip(headings.length - 3).map((h) => h.raw.endsWith('\r')),
+        everyElement(isTrue),
+      );
+    });
+
+    test('带收尾 # 且行尾 CRLF 的标题仍能正确 strip', () {
+      const markdown = '## 标题二 ##\r\n\n### 带 `代码` ##\r\n';
+      final headings = parseMarkdownHeadings(markdown);
+      expect(headings.map((h) => h.text), ['标题二', '带 代码']);
+      expect(headings.map((h) => h.level), [2, 3]);
+    });
+
+    test('围栏代码块里 CRLF 行尾的 # 注释仍不进大纲', () {
+      const markdown = '# 真标题\r\n\n'
+          '```dart\r\n'
+          '# 代码里的假标题\r\n'
+          '```\r\n\n'
+          '## 真二级标题 ##\r\n';
+      final headings = parseMarkdownHeadings(markdown);
+      expect(headings.map((h) => h.text), ['真标题', '真二级标题']);
+    });
+
+    test('CRLF 只放宽行尾，`#标题` 与 4 空格缩进仍不算标题', () {
+      const markdown = '#标题\r\n\n    # 缩进四格是代码块\r\n\n   ## 缩进三格算 ##\r\n';
+      final headings = parseMarkdownHeadings(markdown);
+      expect(headings.map((h) => h.text), ['缩进三格算']);
+      expect(headings.single.level, 2);
+    });
   });
 
   group('activeHeadingIndex', () {

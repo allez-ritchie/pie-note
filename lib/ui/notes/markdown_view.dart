@@ -158,7 +158,13 @@ double markdownHeadingTopSpacing(int level) {
   }
 }
 
-final RegExp _leadingAtxHeadingPattern = RegExp(r'^ {0,3}(#{1,6})(?:[ \t]|$)');
+/// ATX 标题识别，与 `markdown_outline.dart` 的解析规则保持一致。
+///
+/// 末尾的 `\r` 是 CRLF 正文按 `\n` 切开后的行尾残留，必须容忍，否则混用 CRLF 的
+/// 标题在实时预览里会丢掉标题上方的留白；`#标题` 这类非法 ATX 仍不算标题。
+final RegExp _leadingAtxHeadingPattern = RegExp(
+  r'^ {0,3}(#{1,6})(?:[ \t]|\r?$)',
+);
 
 /// 取一段源码第一行的 ATX 标题级别（不是标题时返回 null）。
 ///

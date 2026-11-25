@@ -138,7 +138,11 @@ bool _isFenceLine(String line) {
 }
 
 /// 是否为 ATX 标题行（`# 标题`）。标题总是独立成块。
-final RegExp _headingPattern = RegExp(r'^ {0,3}#{1,6}(?:[ \t]|$)');
+///
+/// 末尾的 `\r` 是 CRLF 正文按 `\n` 切开后的行尾残留：必须与
+/// `markdown_outline.dart` 的标题解析同样容忍它，否则「混用 CRLF 的标题行」
+/// 会被大纲识别却不在这里切块，导致块偏移量与大纲偏移量错位。
+final RegExp _headingPattern = RegExp(r'^ {0,3}#{1,6}(?:[ \t]|\r?$)');
 
 /// 扫描出每个非空块的 `[start, end)` 范围。
 ///

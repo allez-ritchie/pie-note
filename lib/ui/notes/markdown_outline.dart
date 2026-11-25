@@ -3,7 +3,10 @@
 // 解析必须与 [MarkdownSourceMap] 的切块规则保持一致：
 // - 围栏代码块（``` / ~~~）里的 `#` 不算标题；
 // - 标题行最多允许 3 个前导空格（CommonMark 的 ATX 规则），`#标题` 不带空格不算；
-// - 允许收尾的 `#` 序列（`## 标题 ##`），展示时去掉。
+// - 允许收尾的 `#` 序列（`## 标题 ##`），展示时去掉；
+// - 正文混用 CRLF 时，标题行会以 `\r` 结尾（`#### 标题\r`）：解析只容忍这个行尾
+//   `\r`，不能因为 Dart 的 `$` 不允许在 `\r` 前结束匹配就把整行丢掉，
+//   但也不放宽 `#标题` 这类非法 ATX 的判定。
 
 import 'markdown_blocks.dart';
 
@@ -25,12 +28,16 @@ class MarkdownHeading {
   final String text;
 
   /// 标题行的源码（不含换行），供调试/提示使用。
+  ///
+  /// CRLF 混用的正文里会保留行尾的 `\r`，与 [offset]/[end] 的范围严格对齐。
   final String raw;
 
   /// 标题行在整篇源码中的起始偏移量。
   final int offset;
 
   /// 标题行结束偏移量（不含换行）。
+  ///
+  /// 行尾是 CRLF 时包含那个 `\r`：`markdown.substring(offset, end) == raw`。
   final int end;
 
   /// 标题正文的起始偏移量（`#` 与空格之后），用于把光标/滚动定位到标题。
@@ -49,12 +56,15 @@ class OutlineJumpRequest {
 }
 
 /// ATX 标题行：0~3 个前导空格 + 1~6 个 `#` + 空白或行尾 + 正文。
+///
+/// 末尾的 `\r` 是 CRLF 正文被按 `\n` 切开后残留的行尾符：Dart 的 `$` 不允许在
+/// `\r` 之前结束匹配，这里显式容忍它，否则整行标题会被丢掉。
 final RegExp _atxHeadingPattern = RegExp(
-  r'^( {0,3})(#{1,6})(?:[ \t]+(.*?))?[ \t]*$',
+  r'^( {0,3})(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$',
 );
 
-/// 可选的收尾 `#` 序列（`## 标题 ###`）。
-final RegExp _closingHashesPattern = RegExp(r'[ \t]+#+[ \t]*$');
+/// 可选的收尾 `#` 序列（`## 标题 ###`），同样容忍 CRLF 残留的 `\r`。
+final RegExp _closingHashesPattern = RegExp(r'[ \t]+#+[ \t]*\r?$');
 
 final RegExp _markdownImagePattern = RegExp(r'!\[([^\]]*)\]\([^)]*\)');
 final RegExp _markdownLinkPattern = RegExp(r'\[([^\]]*)\]\([^)]*\)');
