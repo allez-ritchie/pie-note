@@ -122,12 +122,15 @@ void main() {
     final offset = field.controller!.selection.baseOffset;
     // 光标落在「第二节」标题文字上，而不是行首的 `##`。
     expect(_content.substring(offset), startsWith('第二节'));
-    // 输入框内部也已滚到该标题（末尾标题在初始视口之外）。
+    // 正文也已滚到该标题（末尾标题在初始视口之外）。源码模式的滚动由外层
+    // SingleChildScrollView 负责，输入框随正文长高、自身不再滚动。
     final scrollable = tester.state<ScrollableState>(
-      find.descendant(
-        of: find.byType(TextField).last,
-        matching: find.byType(Scrollable),
-      ),
+      find
+          .ancestor(
+            of: find.byType(TextField).last,
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(scrollable.position.pixels, greaterThan(0));
   });

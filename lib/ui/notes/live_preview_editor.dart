@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 
+import 'editor_scroll_tail.dart';
 import 'editor_strings.dart';
 import 'markdown_blocks.dart';
 import 'markdown_outline.dart';
@@ -607,20 +608,25 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
     return Column(
       children: [
         Expanded(
-          child: GestureDetector(
-            // 点按渲染态的空白处收起源码；具体段落由各自的手势优先处理。
-            onTap: _blockFocus.unfocus,
-            behavior: HitTestBehavior.translucent,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                _horizontalPadding,
-                8,
-                _horizontalPadding,
-                32,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: children,
+          // 末尾留半个视口：最后一段才能继续上滚到屏幕中间（同 Obsidian）。
+          // 留白放在滚动区内，点它同样会收起展开的源码（手势在 GestureDetector 里）。
+          child: EditorScrollTail(
+            base: 32,
+            builder: (context, metrics) => GestureDetector(
+              // 点按渲染态的空白处收起源码；具体段落由各自的手势优先处理。
+              onTap: _blockFocus.unfocus,
+              behavior: HitTestBehavior.translucent,
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  _horizontalPadding,
+                  8,
+                  _horizontalPadding,
+                  metrics.bottomInset,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                ),
               ),
             ),
           ),

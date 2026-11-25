@@ -15,6 +15,7 @@ import '../common/widgets.dart';
 import '../home/workspace_strings.dart';
 import '../notebooks/move_to_notebook_dialog.dart';
 import '../notebooks/notes_strings.dart';
+import 'editor_scroll_tail.dart';
 import 'editor_strings.dart';
 import 'live_preview_editor.dart';
 import 'markdown_outline.dart';
@@ -999,26 +1000,45 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   }
 
   Widget _buildEditor(ColorScheme scheme) {
-    return TextField(
-      controller: _contentController,
-      focusNode: _contentFocus,
-      maxLines: null,
-      minLines: null,
-      expands: true,
-      textAlignVertical: TextAlignVertical.top,
-      keyboardType: TextInputType.multiline,
-      style: const TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 14.5,
-        height: 1.65,
-      ),
-      decoration: InputDecoration(
-        hintText: EditorStrings.contentHint,
-        filled: false,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+    // 源码模式的滚动必须由**外层** SingleChildScrollView 负责。
+    //
+    // 不能给 expands 的 TextField 加大 contentPadding：InputDecorator 会把它从
+    // 输入区高度里扣掉，可编辑视口会永久缩到半屏（长文档只能在一半高度里编辑）。
+    // 这里让输入框至少铺满视口、随正文自然长高，外层再多留半个视口，
+    // 整页因此能多滚半个屏幕，最后一行才能停在中间。
+    return EditorScrollTail(
+      base: 16,
+      // 输入框自己的 contentPadding.bottom，外层不再重复补这部分留白。
+      innerBottom: 16,
+      builder: (context, metrics) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, metrics.bottomInset),
+        child: ConstrainedBox(
+          // 内容比视口短时输入框也铺满整屏：点空白处同样能聚焦继续写。
+          constraints: BoxConstraints(minHeight: metrics.viewportExtent),
+          child: TextField(
+            controller: _contentController,
+            focusNode: _contentFocus,
+            maxLines: null,
+            // 输入框随正文长高，内部不再滚动（滚动交给外层），
+            // 光标移动时框架会把它滚进外层视口。
+            textAlignVertical: TextAlignVertical.top,
+            keyboardType: TextInputType.multiline,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 14.5,
+              height: 1.65,
+            ),
+            decoration: InputDecoration(
+              hintText: EditorStrings.contentHint,
+              filled: false,
+              isDense: true,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1086,14 +1106,17 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
           flex: 5,
           child: _buildPane(
             EditorStrings.paneSource,
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
-              child: SelectableText(
-                _contentController.text,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 13.5,
-                  height: 1.65,
+            EditorScrollTail(
+              base: 40,
+              builder: (context, metrics) => SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(20, 8, 20, metrics.bottomInset),
+                child: SelectableText(
+                  _contentController.text,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13.5,
+                    height: 1.65,
+                  ),
                 ),
               ),
             ),
@@ -1150,28 +1173,32 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     return SelectionArea(
       child: NotificationListener<ScrollNotification>(
         onNotification: _handlePreviewScroll,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < sections.length; i++)
-                Padding(
-                  // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
-                  padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
-                  child: KeyedSubtree(
-                    key: _sectionKeys.putIfAbsent(
-                      sections[i].start,
-                      () => GlobalKey(debugLabel: 'section-${sections[i].start}'),
-                    ),
-                    child: MarkdownView(
-                      content: sections[i].markdown,
-                      taskStartIndex: sections[i].taskOffset,
-                      onToggleTask: _toggleTask,
+        // 末尾留半个视口：最后一行才能继续上滚到屏幕中间（同 Obsidian）。
+        child: EditorScrollTail(
+          base: 40,
+          builder: (context, metrics) => SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(20, 16, 20, metrics.bottomInset),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < sections.length; i++)
+                  Padding(
+                    // 分节后两个 MarkdownBody 之间没有块间距，补上与原渲染一致的 8。
+                    padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+                    child: KeyedSubtree(
+                      key: _sectionKeys.putIfAbsent(
+                        sections[i].start,
+                        () => GlobalKey(debugLabel: 'section-${sections[i].start}'),
+                      ),
+                      child: MarkdownView(
+                        content: sections[i].markdown,
+                        taskStartIndex: sections[i].taskOffset,
+                        onToggleTask: _toggleTask,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

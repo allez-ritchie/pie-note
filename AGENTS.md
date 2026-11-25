@@ -181,6 +181,7 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/notebooks/` | 笔记本列表与笔记列表页（宽屏时两者合并为左右双栏）；笔记的⋯菜单、多选与批量操作在 `notes_screen.dart`，移动目标选择在 `move_to_notebook_dialog.dart`。 |
 | `lib/ui/notes/note_editor_screen.dart` | 笔记编辑页：实时预览 / 源码 / 阅读三视图、大纲跳转、保存（含 Ctrl/Cmd+S）、删除、未保存拦截。 |
 | `lib/ui/notes/live_preview_editor.dart` | 实时预览编辑器：渲染态点按段落，该段就地变成无边框源码输入框，失焦自动收起（块级 Live Preview）。 |
+| `lib/ui/notes/editor_scroll_tail.dart` | 正文滚动区末尾的「半个视口」留白：三个视图共用的 `EditorScrollTail` 与纯函数 `editorBottomInset`。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
 | `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调。 |
@@ -351,6 +352,9 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    点任务复选框应立即勾选并标为「未保存」；
    保存后用 `curl` 核对后端正文只改动了目标区域、块间空行未被打乱；
    保存成功的提示应是顶部半透明小横幅（不遮住底部编辑区、不拦截点击、自动消失）。
+   正文末尾（三视图都一样）应留出约**半个视口**的空白：把笔记拖到最底部时，
+   最后一行要能继续上滚到屏幕中间，而不是永远贴着页面下缘（参考 Obsidian）；
+   短笔记不应因此凭空出现一大段可滚动留白（内容不足一屏时仍贴顶显示）。
 6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
    竖屏是页面铺满 + 底部悬浮胶囊工具栏 + 单栏，点进笔记本打开新的笔记列表标签页；
    横屏（宽 >= 720）改为侧边导航 + 顶部标签条，宽 >= 840 且高 >= 480 时笔记本与笔记并排；
