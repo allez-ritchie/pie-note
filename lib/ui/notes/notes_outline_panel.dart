@@ -156,27 +156,26 @@ class _NotesOutlinePanelState extends State<NotesOutlinePanel> {
                   ),
                 ),
               if (showCollapseButton)
-                // 直接写字而不是只放图标：手机上没有 tooltip，用户看不到「全部折叠」。
-                TextButton.icon(
+                // 只放图标（不写字）：标题栏已经有大纲图标、计数与关闭按钮，
+                // 再塞一段文字会把窄侧栏的标题行挤爆；手机上靠长按 tooltip 与
+                // 图标的折叠 / 展开方向来理解语义。
+                IconButton(
                   key: const ValueKey<String>('outline-toggle-all'),
-                  onPressed: _toggleAll,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    minimumSize: const Size(0, 32),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  tooltip: _allCollapsed
+                      ? EditorStrings.outlineExpandAll
+                      : EditorStrings.outlineCollapseAll,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
                   ),
+                  onPressed: _toggleAll,
                   icon: Icon(
                     _allCollapsed
                         ? Icons.unfold_more_rounded
                         : Icons.unfold_less_rounded,
-                    size: 16,
-                  ),
-                  label: Text(
-                    _allCollapsed
-                        ? EditorStrings.outlineExpandAll
-                        : EditorStrings.outlineCollapseAll,
-                    style: theme.textTheme.labelSmall,
+                    size: 17,
                   ),
                 ),
               if (widget.onClose != null)

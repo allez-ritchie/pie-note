@@ -89,6 +89,27 @@ Finder _inOutline(String text) => find.descendant(
   matching: find.text(text),
 );
 
+/// 大纲标题栏的「全部折叠 / 全部展开」按钮：只保留图标，用 key 定位。
+Finder get _toggleAllButton => find.byKey(
+  const ValueKey<String>('outline-toggle-all'),
+);
+
+/// 当前「全部折叠 / 全部展开」按钮的语义（tooltip 文案）与图标。
+({String tooltip, IconData icon}) _toggleAllState(WidgetTester tester) {
+  final button = tester.widget<IconButton>(_toggleAllButton);
+  final icon = tester.widget<Icon>(find.descendant(
+    of: _toggleAllButton,
+    matching: find.byType(Icon),
+  ));
+  return (tooltip: button.tooltip!, icon: icon.icon!);
+}
+
+/// 点按「全部折叠 / 全部展开」按钮。
+Future<void> _toggleAll(WidgetTester tester) async {
+  await tester.tap(_toggleAllButton);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('宽窗口大纲是右侧常驻侧栏，列出各级标题', (tester) async {
     await _pumpEditor(tester, const Size(1400, 900));
@@ -236,25 +257,43 @@ void main() {
     expect(firstTurns(), 0.25);
   });
 
-  testWidgets('标题栏「全部折叠 / 全部展开」切换整份大纲', (tester) async {
+  testWidgets('标题栏的图标按钮切换「全部折叠 / 全部展开」', (tester) async {
     await _pumpEditor(tester, const Size(1400, 900));
     await _openOutline(tester);
 
-    expect(find.text(EditorStrings.outlineCollapseAll), findsOneWidget);
-    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
-    await tester.pumpAndSettle();
+    // 不再写字，只留图标：默认是「全部折叠」语义。
+    expect(_toggleAllButton, findsOneWidget);
+    expect(_toggleAllState(tester).tooltip, EditorStrings.outlineCollapseAll);
+    expect(_toggleAllState(tester).icon, Icons.unfold_less_rounded);
+    await _toggleAll(tester);
 
     // 全部折叠后只剩两个一级标题，子标题都藏起来；按钮变成「全部展开」。
     expect(_inOutline('第一节'), findsNothing);
     expect(_inOutline('第二节'), findsNothing);
     expect(_inOutline('第一章'), findsOneWidget);
-    expect(find.text(EditorStrings.outlineExpandAll), findsOneWidget);
+    expect(_toggleAllState(tester).tooltip, EditorStrings.outlineExpandAll);
+    expect(_toggleAllState(tester).icon, Icons.unfold_more_rounded);
 
-    await tester.tap(find.text(EditorStrings.outlineExpandAll));
-    await tester.pumpAndSettle();
+    await _toggleAll(tester);
     expect(_inOutline('第一节'), findsOneWidget);
     expect(_inOutline('第二节'), findsOneWidget);
-    expect(find.text(EditorStrings.outlineCollapseAll), findsOneWidget);
+    expect(_toggleAllState(tester).tooltip, EditorStrings.outlineCollapseAll);
+  });
+
+  testWidgets('全部折叠按钮不再显示文字标签', (tester) async {
+    await _pumpEditor(tester, const Size(1400, 900));
+    await _openOutline(tester);
+
+    // 标题栏只保留图标 + 长按 tooltip，避免窄侧栏里标题行被文字挤爆。
+    expect(find.text(EditorStrings.outlineCollapseAll), findsNothing);
+    expect(find.text(EditorStrings.outlineExpandAll), findsNothing);
+    expect(
+      find.descendant(
+        of: _toggleAllButton,
+        matching: find.byType(Text),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('折叠某标题后仍可点击其兄弟标题跳转', (tester) async {
@@ -262,8 +301,7 @@ void main() {
     await _switchTo(tester, EditorStrings.modeSource);
     await _openOutline(tester);
 
-    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
-    await tester.pumpAndSettle();
+    await _toggleAll(tester);
     await tester.tap(_inOutline('第二章'));
     await tester.pumpAndSettle();
 
@@ -280,8 +318,7 @@ void main() {
     content.controller!.selection = TextSelection.collapsed(offset: secondSection);
 
     await _openOutline(tester);
-    await tester.tap(find.text(EditorStrings.outlineCollapseAll));
-    await tester.pumpAndSettle();
+    await _toggleAll(tester);
     expect(_inOutline('第二节'), findsNothing);
 
     // 光标移出去再移回来，触发一次活动标题变化。
@@ -327,7 +364,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openOutline(tester);
 
-    expect(find.text(EditorStrings.outlineCollapseAll), findsNothing);
+    expect(_toggleAllButton, findsNothing);
     expect(
       find.descendant(
         of: find.byType(NotesOutlinePanel),
