@@ -272,4 +272,76 @@ void main() {
       expect(visibleOutlineHeadings(const <MarkdownHeading>[], {0}), isEmpty);
     });
   });
+
+  group('findHeadingByAnchor', () {
+    final headings = parseMarkdownHeadings('''
+# 用 i2c-tools 操作 XS9922B 寄存器
+
+## 0. 目录
+
+## 1. 准备段（每条命令前先跑一次）
+
+## 2. 五个基本动作（记住这五条就够用）
+
+### 3.5 交叉验证"不是假通"
+
+## 10. 场景 S7：lane 数 / 速率诊断（必须用 4 字节事务）
+
+## 19.1 五条红线
+''');
+
+    test('按 GitHub 风格 slug 命中标题', () {
+      final heading = findHeadingByAnchor(
+        headings,
+        '1-准备段每条命令前先跑一次',
+      );
+      expect(heading, isNotNull);
+      expect(heading!.level, 2);
+      expect(heading.text, '1. 准备段（每条命令前先跑一次）');
+    });
+
+    test('全角标点、斜杠、加号的锚点也能命中（中文目录的常见写法）', () {
+      // 锚点里带中文标点原样（不转小写短横线）时，退到宽松键匹配。
+      expect(
+        findHeadingByAnchor(headings, '10. 场景 S7：lane 数 / 速率诊断')?.text,
+        '10. 场景 S7：lane 数 / 速率诊断（必须用 4 字节事务）',
+      );
+      expect(
+        findHeadingByAnchor(headings, '3.5 交叉验证"不是假通"')?.level,
+        3,
+      );
+    });
+
+    test('命中不了返回 null，不误跳到别的标题', () {
+      expect(findHeadingByAnchor(headings, '不存在的章节'), isNull);
+      expect(findHeadingByAnchor(headings, ''), isNull);
+      expect(findHeadingByAnchor(const <MarkdownHeading>[], '任意'), isNull);
+    });
+
+    test('percent-encoded 锚点先解码再匹配', () {
+      final fragment = decodeAnchorFragment('%E5%87%86%E5%A4%87%E6%AE%B5');
+      expect(fragment, '准备段');
+      expect(findHeadingByAnchor(headings, fragment)?.text, '1. 准备段（每条命令前先跑一次）');
+    });
+
+    test('非法百分号编码原样保留，不抛异常', () {
+      expect(decodeAnchorFragment('100%'), '100%');
+      expect(decodeAnchorFragment('成功率 100%25'), '成功率 100%');
+      expect(decodeAnchorFragment('准备段'), '准备段');
+    });
+
+    test('前缀匹配有多个候选时不猜，返回 null', () {
+      const ambiguousSource = '# 第二章 准备\n## 第二章 准备段 A\n## 第二章 准备段 B\n';
+      final ambiguous = parseMarkdownHeadings(ambiguousSource);
+      // 「第二章准备段」同时是 A/B 的前缀 → 有歧义，不跳。
+      expect(findHeadingByAnchor(ambiguous, '第二章 准备段'), isNull);
+      // 精确命中仍然正常。
+      expect(findHeadingByAnchor(ambiguous, '第二章 准备段 A'), isNotNull);
+    });
+
+    test('slug 与宽松键都保留分隔符差异', () {
+      expect(headingAnchorSlug('1. 准备段（先跑一次）'), '1-准备段先跑一次');
+      expect(headingAnchorKey('1. 准备段（先跑一次）'), '1准备段先跑一次');
+    });
+  });
 }

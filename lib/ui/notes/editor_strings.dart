@@ -57,6 +57,9 @@ class EditorStrings {
 
   static String outlineCount(int count) => '$count 个标题';
 
+  /// 目录里的锚点找不到对应标题（可能标题被改名 / 删掉了）。
+  static String anchorNotFound(String fragment) => '没找到锚点「$fragment」对应的标题';
+
   // Markdown 工具条
   static const String toolH1 = '一级标题';
   static const String toolH2 = '二级标题';

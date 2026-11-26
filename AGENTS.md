@@ -185,10 +185,10 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/notes/editor_scroll_tail.dart` | 正文滚动区末尾的「半个视口」留白：三个视图共用的 `EditorScrollTail` 与纯函数 `editorBottomInset`。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
-| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、围栏代码块交给 `markdown_code_block.dart`。 |
+| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、正文目录的页内锚点（`#标题`）回调 `onTapAnchor`、围栏代码块交给 `markdown_code_block.dart`。 |
 | `lib/ui/notes/markdown_code_block.dart` | 围栏代码块渲染：右上角语言角标 + 点按复制、等宽铺满正文、超宽行内部横向滚动；正文交给 `markdown_code_highlight.dart` 上色。 |
 | `lib/ui/notes/markdown_code_highlight.dart` | 围栏代码块的语法高亮：`re_highlight`（highlight.js v11.9 移植）分词 + 自写扁平 `TextSpan` 渲染器、内语言表、浅/深两套对比度校验过的配色、按代码内容做的 LRU 缓存。 |
-| `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`）。 |
+| `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`），以及正文目录锚点解析（`decodeAnchorFragment` / `findHeadingByAnchor`）。 |
 | `lib/ui/notes/notes_outline_panel.dart` | 大纲面板：宽窗口右侧侧栏 / 窄窗口底部面板，点标题回调跳转；自带折叠状态（单个标题 + 全部折叠/展开）。 |
 | `lib/ui/notes/markdown_toolbar.dart` / `markdown_actions.dart` | Markdown 快捷工具条及其纯文本编辑操作（源码/段落共用）。 |
 | `lib/ui/search/search_screen.dart` | 全文/向量搜索页。 |
@@ -375,6 +375,10 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    标题栏的「全部折叠 / 全部展开」应在两种状态之间切换；扁平（无子标题）笔记不显示这两个按钮。
    把光标移进被折叠的子标题时，其上级会自动展开，保证高亮项始终可见。
    再点一次目录图标（或侧栏的关闭按钮）收起侧栏。
+   另外，笔记**正文里自己写的目录**（`- [1. 准备段](#1-准备段)` 这类普通 Markdown
+   锚点链接）在实时预览 / 阅读视图点按后也要滚到对应标题；锚点可以写成 GitHub
+   风格 slug、原文中文（含全角标点）或 percent-encoded，匹配不到时顶部横幅提示，
+   不能静默无反应；源码模式是纯文本编辑器，锚点不渲染、不需要可点。
 8. 选区验证点：阅读视图长按并拖动，应能跨段落、跨标题小节连续选中（选区高亮不断开），
    复制得到整段文字；工具条选中多行后点 H1/H2/列表/引用，应逐行加前缀，
    再点一次逐行移除；实时预览点按段落仍进入就地编辑（不被选区手势抢走）。
@@ -547,8 +551,10 @@ build(android): 放行局域网明文 HTTP 后端地址
   `highlight` 0.7.0 停在 highlight.js 9.x（2021 年）且 SDK 约束仍是 `<3.0.0`；
   也**不要**用 `re_highlight` 自带的 `TextSpanRenderer`：它输出深层嵌套 TextSpan，
   3000 行代码渲染要 50 秒以上（见该文件的注释与测试）。
-- **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲，
-  且跳转是「滚动到标题」而不是 Markdown 锚点链接。
+- **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲。
+  正文里手写的 `[标题](#锚点)` 目录可以点（实时预览 / 阅读视图），但匹配是**宽松**的
+  （GitHub slug → 去标点模糊匹配 → 前缀 / 包含），不是 CommonMark 的严格锚点语义：
+  同名标题取第一个，匹配不到时提示而不是猜。
 - **不做离线编辑**：断网时列表与笔记读取失败会提示错误，不提供本地缓存兜底。
 - **不做冲突合并**：同一笔记被多处同时修改时，后保存的覆盖先保存的。
 - **AI 能力全部由后端承担**：本 App 只调用 Open Notebook 的

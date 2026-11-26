@@ -27,6 +27,7 @@ class LivePreviewEditor extends StatefulWidget {
     this.onToggleTask,
     this.onBlockActivated,
     this.jump,
+    this.onTapAnchor,
     this.header,
     this.empty,
   });
@@ -42,6 +43,13 @@ class LivePreviewEditor extends StatefulWidget {
 
   /// 大纲跳转请求：滚动到该偏移量所在段落。
   final OutlineJumpRequest? jump;
+
+  /// 点按正文里的页内锚点（`[标题](#标题)`）时回调，参数是链接文字与 `#` 之后
+  /// 的片段。
+  ///
+  /// 实时预览只拿到「单块」源码，不知道整篇的标题表，因此把解析与滚动交给
+  /// 编辑页（它会按标题表找到目标再通过 [jump] 滚回来）。
+  final void Function(String text, String fragment)? onTapAnchor;
 
   /// 正文滚动区顶部的头部（笔记标题 + 保存状态行）。
   ///
@@ -694,6 +702,9 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
           // 代码块在渲染态也要能点开源码：不传回调时组件会把点按当作「复制」，
           // 实时预览里就再也编辑不了代码块了。
           onTapCodeBlock: () => _activate(index, block),
+          // 目录里的 `[标题](#标题)` 交给编辑页找标题并滚动；实时预览自己不知道
+          // 整篇的标题表，因此向上回调而不是在这里处理。
+          onTapAnchor: widget.onTapAnchor,
         ),
       ),
     );

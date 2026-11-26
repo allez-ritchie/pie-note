@@ -542,6 +542,25 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     _syncActiveHeading(selection.isValid ? selection.extentOffset : null);
   }
 
+  /// 点击正文里的页内锚点（`[标题](#标题)`，即笔记自己写的目录）。
+  ///
+  /// 笔记正文的「目录」是普通 Markdown 链接，`#` 片段没有 scheme，渲染组件
+  /// 只认识 `http/https` / 双链，以前点击没有任何反应（目录点不动）。
+  /// 这里按标题表找到目标标题，再走与大纲相同的一套跳转逻辑。
+  void _jumpToAnchor(String linkText, String fragment) {
+    final heading = findHeadingByAnchor(_headings, fragment);
+    if (heading == null) {
+      _showToast(
+        EditorStrings.anchorNotFound(
+          linkText.isEmpty ? fragment : linkText,
+        ),
+        error: true,
+      );
+      return;
+    }
+    _jumpToHeading(heading);
+  }
+
   /// 点击大纲里的标题：滚动 / 定位到该标题。
   ///
   /// - 源码模式：把光标放到标题正文处并聚焦，再让输入框把它滚进视野；
@@ -1092,6 +1111,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
       onToggleTask: _toggleTask,
       onBlockActivated: (block) => _syncActiveHeading(block.start),
       jump: _outlineJump,
+      onTapAnchor: _jumpToAnchor,
       header: _buildNoteHeader(Theme.of(context).colorScheme, editable: true),
       empty: empty ? _EmptyDraftPrompt(onStart: _startWriting) : null,
     );
@@ -1212,6 +1232,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
                         content: sections[i].markdown,
                         taskStartIndex: sections[i].taskOffset,
                         onToggleTask: _toggleTask,
+                        onTapAnchor: _jumpToAnchor,
                       ),
                     ),
                   ),

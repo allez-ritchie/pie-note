@@ -9,6 +9,7 @@ import '../common/navigation.dart';
 import '../home/workspace_navigator.dart';
 import 'editor_strings.dart';
 import 'markdown_code_block.dart';
+import 'markdown_outline.dart';
 
 /// Markdown 预览。
 ///
@@ -16,6 +17,8 @@ import 'markdown_code_block.dart';
 /// - `[[标题]]` 会渲染成可点击的双链，点击后在全部笔记中按标题查找并跳转；
 /// - `![alt](url)` **不加载图片**，渲染为占位块（本仓库暂不处理图片链接）；
 /// - `http/https` 外链交给系统浏览器打开；
+/// - 页内锚点（`[1. 准备段](#1-准备段)`）回调 [onTapAnchor]：渲染组件自己不知道
+///   正文怎么滚动，由编辑页滚动到对应标题（笔记正文里的「目录」就靠它）；
 /// - 围栏代码块由 [MarkdownCodeBlock] 渲染：等宽、右上角显示语言、点按复制；
 /// - 传入 [onToggleTask] 时，任务列表复选框可点击切换（预览时编辑）；
 /// - 传入 [onTapText] 时，点击渲染文本会回调（实时预览用来就地展开该段源码）。
@@ -28,6 +31,7 @@ class MarkdownView extends ConsumerWidget {
     this.taskStartIndex = 0,
     this.selectable = false,
     this.onTapCodeBlock,
+    this.onTapAnchor,
   });
 
   final String content;
@@ -57,6 +61,15 @@ class MarkdownView extends ConsumerWidget {
   /// 为空时点按代码块即为「复制代码」（阅读视图 / 对话 / 来源等只读场景）。
   final VoidCallback? onTapCodeBlock;
 
+  /// 点按页内锚点链接（`#某个标题`）时回调。
+  ///
+  /// 参数：链接文字（目录里显示的那一截）与 `#` 之后的原始片段。链接文字不一定
+  /// 等于标题全文（目录常写缩略名），提示「找不到」时给用户看文字更友好。
+  ///
+  /// 为空时点击锚点什么也不做（来源正文、对话消息等没有「当前笔记」的场景）；
+  /// 阅读视图与实时预览由编辑页传入，滚动到对应标题。
+  final void Function(String text, String fragment)? onTapAnchor;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -67,7 +80,8 @@ class MarkdownView extends ConsumerWidget {
       data: transformWikiLinks(content),
       styleSheet: styleSheet,
       onTapText: onTapText,
-      onTapLink: (text, href, title) => _handleLink(context, ref, href),
+      onTapLink: (text, href, title) =>
+          _handleLink(context, ref, text, href),
       imageBuilder: (uri, title, alt) => GestureDetector(
         onTap: onTapText,
         child: _ImagePlaceholder(uri: uri, alt: alt),
@@ -101,8 +115,26 @@ class MarkdownView extends ConsumerWidget {
     return SelectionArea(child: body);
   }
 
-  Future<void> _handleLink(BuildContext context, WidgetRef ref, String? href) async {
+  Future<void> _handleLink(
+    BuildContext context,
+    WidgetRef ref,
+    String text,
+    String? href,
+  ) async {
     if (href == null || href.isEmpty) return;
+
+    // 页内锚点：[目录](#标题) 的 href 是纯片段，没有 scheme，必须先于
+    // Uri 分支处理，否则会被当成「不认识的链接」静默丢弃（笔记里的目录点不动）。
+    if (href.startsWith('#')) {
+      final fragment = decodeAnchorFragment(href.substring(1));
+      if (fragment.isEmpty) return;
+      final onTapAnchor = this.onTapAnchor;
+      if (onTapAnchor != null) {
+        onTapAnchor(text.trim(), fragment);
+        return;
+      }
+    }
+
     final uri = Uri.tryParse(href);
     if (uri == null) return;
 

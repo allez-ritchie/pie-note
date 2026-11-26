@@ -8,6 +8,8 @@
 //   `\r`，不能因为 Dart 的 `$` 不允许在 `\r` 前结束匹配就把整行丢掉，
 //   但也不放宽 `#标题` 这类非法 ATX 的判定。
 
+import 'dart:convert';
+
 import 'markdown_blocks.dart';
 
 /// 一个 ATX 标题及其在源码中的位置。
@@ -138,6 +140,141 @@ String stripMarkdownInline(String source) {
       .replaceAll('~~', '')
       .replaceAll('*', '');
   return text;
+}
+
+/// 解码锚点片段（`#` 之后的部分）。
+///
+/// 目录里的锚点可能是原文（含中文、空格、`%`），也可能是 percent-encoded。
+/// 直接用 `Uri.decodeComponent` 遇到 `100%` 这种非法编码会抛
+/// `ArgumentError`（点一下目录就崩），所以先做合法的 `%XX` 解码、其余原样保留。
+String decodeAnchorFragment(String fragment) {
+  if (!fragment.contains('%')) return fragment;
+  final buffer = StringBuffer();
+  for (var i = 0; i < fragment.length; i++) {
+    final char = fragment[i];
+    if (char != '%' || i + 2 >= fragment.length) {
+      buffer.write(char);
+      continue;
+    }
+    final hex = fragment.substring(i + 1, i + 3);
+    final value = int.tryParse(hex, radix: 16);
+    if (value == null) {
+      buffer.write(char);
+      continue;
+    }
+    // 逐字节解出 UTF-8：中文锚点编码后是连续的多个 %XX。
+    final bytes = <int>[value];
+    var next = i + 3;
+    while (next + 2 < fragment.length && fragment[next] == '%') {
+      final more = int.tryParse(fragment.substring(next + 1, next + 3), radix: 16);
+      if (more == null) break;
+      bytes.add(more);
+      next += 3;
+    }
+    try {
+      buffer.write(utf8.decode(bytes));
+      i = next - 1;
+    } catch (_) {
+      buffer.write(char);
+    }
+  }
+  return buffer.toString();
+}
+
+/// 锚点匹配用的宽松键：只保留字母、数字与汉字，并统一小写。
+///
+/// 标题锚点在 Markdown 笔记里没有统一标准：GitHub 生成的是「小写 + 空格转 `-` +
+/// 去标点」，编辑器 / 手工写的目录还常有全角括号、`：`、`/`、`+` 等。把这些差异
+/// 全部丢掉后再比，才能让 `#1-准备段每条命令前先跑一次` 命中
+/// `1. 准备段（每条命令前先跑一次）`。
+final RegExp _anchorKeyChar = RegExp(r'[0-9a-z\u3400-\u4dbf\u4e00-\u9fff]');
+
+String headingAnchorKey(String text) {
+  final buffer = StringBuffer();
+  for (final code in text.toLowerCase().runes) {
+    final char = String.fromCharCode(code);
+    if (_anchorKeyChar.hasMatch(char)) buffer.write(char);
+  }
+  return buffer.toString();
+}
+
+/// GitHub 风格的标题锚点：只保留字母数字汉字与 `-` / `_`，空白转 `-`。
+///
+/// 与 [headingAnchorKey] 的区别是它保留分隔符，用于优先精确命中标准写法；
+/// 命中不了时再退到宽松键。
+String headingAnchorSlug(String text) {
+  final buffer = StringBuffer();
+  var pendingDash = false;
+  for (final code in text.toLowerCase().runes) {
+    final char = String.fromCharCode(code);
+    if (char == ' ' || char == '\t') {
+      pendingDash = buffer.isNotEmpty;
+      continue;
+    }
+    if (_anchorKeyChar.hasMatch(char) || char == '-' || char == '_') {
+      if (pendingDash) {
+        buffer.write('-');
+        pendingDash = false;
+      }
+      buffer.write(char);
+    }
+  }
+  return buffer.toString();
+}
+
+/// 按锚点片段（`[目录](#这里)` 里 `#` 之后的部分）找标题。
+///
+/// 匹配顺序（越往后越宽松，但**只在没有歧义时**才接受，绝不猜）：
+/// 1. GitHub 风格 slug 精确匹配（`#1-准备段每条命令前先跑一次`）；
+/// 2. 宽松键精确匹配（忽略标点 / 空格 / 大小写 / 全角符号，`#1. 准备段`）；
+/// 3. 唯一前缀匹配（目录里省略了副标题）；
+/// 4. 唯一包含匹配（锚点只写了标题中间一段）。
+/// 都命中不了返回 null（调用方负责提示「找不到这个锚点」）。
+///
+/// 同名标题（锚点重复）取文档里第一个，与 GitHub 的行为一致到「至少不会跳错章节」；
+/// 有多个候选的宽松匹配一律返回 null，宁可提示也不跳到错误章节。
+MarkdownHeading? findHeadingByAnchor(
+  List<MarkdownHeading> headings,
+  String fragment,
+) {
+  // 目录里的锚点可能带编码、也可能用缩略写法，统一解一次。
+  final target = decodeAnchorFragment(fragment).trim();
+  if (target.isEmpty || headings.isEmpty) return null;
+
+  // 1. GitHub 风格 slug 精确命中（标准写法，优先级最高）。
+  for (final heading in headings) {
+    if (headingAnchorSlug(heading.text) == target) return heading;
+  }
+
+  // 2. 宽松键精确命中（忽略标点 / 空格 / 大小写 / 全角半角）。
+  final key = headingAnchorKey(target);
+  if (key.isEmpty) return null;
+  for (final heading in headings) {
+    if (headingAnchorKey(heading.text) == key) return heading;
+  }
+
+  // 3. 唯一前缀：目录里常省略标题的后半段（`#1-准备段` 指向
+  //    `1. 准备段（每条命令前先跑一次）`）。要求锚点足够长，避免「1」这种
+  //    短锚点命中一串章节；多个候选说明锚点太模糊，不作猜测。
+  if (key.length >= 4) {
+    final prefixHits = <MarkdownHeading>[
+      for (final heading in headings)
+        if (headingAnchorKey(heading.text).startsWith(key)) heading,
+    ];
+    if (prefixHits.length == 1) return prefixHits.first;
+    if (prefixHits.length > 1) return null;
+  }
+
+  // 4. 唯一包含：锚点只写了标题中间的一段。多条命中说明锚点太模糊，
+  //    宁可提示找不到也不跳错章节。
+  if (key.length >= 2) {
+    final containsHits = <MarkdownHeading>[
+      for (final heading in headings)
+        if (headingAnchorKey(heading.text).contains(key)) heading,
+    ];
+    if (containsHits.length == 1) return containsHits.first;
+  }
+  return null;
 }
 
 /// 光标 / 滚动位置 [offset] 落在哪个标题上：返回最后一个起始偏移量不超过它的标题。
