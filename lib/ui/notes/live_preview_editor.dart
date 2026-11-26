@@ -7,6 +7,7 @@ import 'editor_scroll_tail.dart';
 import 'editor_strings.dart';
 import 'markdown_blocks.dart';
 import 'markdown_outline.dart';
+import 'markdown_table.dart';
 import 'markdown_toolbar.dart';
 import 'markdown_view.dart';
 
@@ -687,27 +688,69 @@ class _LivePreviewEditorState extends State<LivePreviewEditor> {
 
   Widget _buildRenderedBlock(int index, MarkdownBlock block) {
     final scheme = Theme.of(context).colorScheme;
+    // 含表格的块不吃父级的点摆手势：表格内部有单元格点选、框选与右键菜单，
+    // 外层 InkWell 一参与手势竞技场，点单元格就会变成「展开整块源码」——
+    // 整张表变源码、用户点的那一格丢失（这正是本次要修的问题）。
+    // 纯文本段落仍可点按展开（见 MarkdownView 的 onTapText），
+    // 只是不再额外套一层 InkWell 抢表格的手势。
+    final hasTable = splitMarkdownTables(block.text).any((part) => part.isTable);
+    final child = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: MarkdownView(
+        content: block.text,
+        taskStartIndex: block.taskOffset,
+        onTapText: () => _activate(index, block),
+        onToggleTask: _toggleTask,
+        // 代码块在渲染态也要能点开源码：不传回调时组件会把点按当作「复制」，
+        // 实时预览里就再也编辑不了代码块了。
+        onTapCodeBlock: () => _activate(index, block),
+        // 目录里的 `[标题](#标题)` 交给编辑页找标题并滚动；实时预览自己不知道
+        // 整篇的标题表，因此向上回调而不是在这里处理。
+        onTapAnchor: widget.onTapAnchor,
+        // 表格就地编辑：只回传这张表的源码，由这里替换整篇正文里的对应块，
+        // 不再把整块表格换成源码输入框（会丢失用户点击的那个单元格）。
+        onTableChanged: (markdown) => _replaceBlockText(block, markdown),
+      ),
+    );
+    if (hasTable) {
+      return KeyedSubtree(key: _keyForBlock(block.start), child: child);
+    }
     return InkWell(
       key: _keyForBlock(block.start),
       onTap: () => _activate(index, block),
       borderRadius: BorderRadius.circular(8),
       hoverColor: scheme.primary.withValues(alpha: 0.04),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: MarkdownView(
-          content: block.text,
-          taskStartIndex: block.taskOffset,
-          onTapText: () => _activate(index, block),
-          onToggleTask: _toggleTask,
-          // 代码块在渲染态也要能点开源码：不传回调时组件会把点按当作「复制」，
-          // 实时预览里就再也编辑不了代码块了。
-          onTapCodeBlock: () => _activate(index, block),
-          // 目录里的 `[标题](#标题)` 交给编辑页找标题并滚动；实时预览自己不知道
-          // 整篇的标题表，因此向上回调而不是在这里处理。
-          onTapAnchor: widget.onTapAnchor,
-        ),
-      ),
+      child: child,
     );
+  }
+
+  /// 用 [markdown] 替换 [block] 这一段源码（表格就地编辑用）。
+  ///
+  /// 表格的编辑是逐单元格实时回写的，因此这里不能走 [_activate]/[_commitBlockEdit]：
+  /// 那条路径会把整块展开成输入框，反而让用户丢失正在编辑的单元格。
+  void _replaceBlockText(MarkdownBlock block, String markdown) {
+    final document = widget.controller.text;
+    // 分块可能已因别处的编辑而平移，按「起点 + 原文」重新确认目标区间。
+    var target = block;
+    if (document.length < block.end ||
+        document.substring(block.start, block.end) != block.text) {
+      final located = splitMarkdownBlocks(
+        document,
+      ).where((candidate) => candidate.text == block.text).firstOrNull;
+      if (located == null) return;
+      target = located;
+    }
+    if (target.text == markdown) return;
+    final newDocument = document.replaceRange(
+      target.start,
+      target.end,
+      markdown,
+    );
+    widget.controller.value = TextEditingValue(
+      text: newDocument,
+      selection: TextSelection.collapsed(offset: target.start + markdown.length),
+    );
+    if (mounted) setState(() {});
   }
 
   /// 就地展开的源码输入框。

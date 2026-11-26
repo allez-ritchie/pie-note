@@ -10,6 +10,8 @@ import '../home/workspace_navigator.dart';
 import 'editor_strings.dart';
 import 'markdown_code_block.dart';
 import 'markdown_outline.dart';
+import 'markdown_table.dart';
+import 'markdown_table_view.dart';
 
 /// Markdown 预览。
 ///
@@ -32,6 +34,7 @@ class MarkdownView extends ConsumerWidget {
     this.selectable = false,
     this.onTapCodeBlock,
     this.onTapAnchor,
+    this.onTableChanged,
   });
 
   final String content;
@@ -70,14 +73,65 @@ class MarkdownView extends ConsumerWidget {
   /// 阅读视图与实时预览由编辑页传入，滚动到对应标题。
   final void Function(String text, String fragment)? onTapAnchor;
 
+  /// 表格被就地编辑后回调新的表格源码（整块 Markdown）。
+  ///
+  /// 为空表示表格只读：仍会渲染成表格网格，但单元格不可编辑、没有新增行列
+  /// 的窄条（阅读视图 / 来源正文 / 对话消息）。
+  final ValueChanged<String>? onTableChanged;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final styleSheet = buildMarkdownStyleSheet(theme);
+    // 表格要按「行 × 列」交互，而 flutter_markdown_plus 的 table 分支会无条件用
+    // 自己的 Table 覆盖 `builders['table']`，自定义构建器根本落不到渲染树里。
+    // 因此这里先把 Markdown 按表格块切开：表格由 [MarkdownTableView] 渲染，
+    // 前后非表格片段仍交给 MarkdownBody（保持代码块、任务列表等既有行为）。
+    final parts = splitMarkdownTables(content);
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < parts.length; i++) ...[
+          if (i > 0) SizedBox(height: styleSheet.blockSpacing ?? 8),
+          if (parts[i].table != null)
+            MarkdownTableView(
+              // 按下标做 key：用表格在源码里的偏移做 key 的话，在上面那段
+              // 文字里打字就会让偏移变化，正在编辑的单元格会被重建、焦点丢失。
+              key: ValueKey('md-table-$i'),
+              markdown: parts[i].text,
+              onChanged: onTableChanged,
+              onTapLink: (text, href) => _handleLink(context, ref, text, href),
+            )
+          else
+            _buildBody(context, ref, theme, styleSheet, parts[i]),
+        ],
+      ],
+    );
+    if (!selectable) return body;
+    // 选中态：整个渲染树套一个 SelectionArea，段落之间可以连续选择、一次复制。
+    // 不能改用 MarkdownBody.selectable：它会给每个段落各建一个 SelectableText，
+    // 选区互不相通（跨段拖选只能选中一段）。
+    //
+    // 上层已经提供了选区容器（阅读视图把整页包在一个 SelectionArea 里，这样
+    // 跨「节」也能连续选）时不要再套一层：嵌套的 SelectionArea 会互相抢手势，
+    // 外层反而选不中。
+    if (SelectionContainer.maybeOf(context) != null) return body;
+    return SelectionArea(child: body);
+  }
+
+  /// 渲染一段不含表格的 Markdown。
+  Widget _buildBody(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeData theme,
+    MarkdownStyleSheet styleSheet,
+    MarkdownTableSegment segment,
+  ) {
     // 复选框按文档顺序构建，用闭包计数把「第几个复选框」换算成全篇序号。
     var localTaskIndex = 0;
-    final body = MarkdownBody(
-      data: transformWikiLinks(content),
+    return MarkdownBody(
+      data: transformWikiLinks(segment.text),
       styleSheet: styleSheet,
       onTapText: onTapText,
       onTapLink: (text, href, title) =>
@@ -89,7 +143,7 @@ class MarkdownView extends ConsumerWidget {
       checkboxBuilder: onToggleTask == null
           ? null
           : (checked) {
-              final index = taskStartIndex + localTaskIndex++;
+              final index = taskStartIndex + segment.taskOffset + localTaskIndex++;
               return _TaskCheckbox(
                 checked: checked,
                 onToggle: () => onToggleTask!(index),
@@ -103,16 +157,6 @@ class MarkdownView extends ConsumerWidget {
         ),
       },
     );
-    if (!selectable) return body;
-    // 选中态：整个渲染树套一个 SelectionArea，段落之间可以连续选择、一次复制。
-    // 不能改用 MarkdownBody.selectable：它会给每个段落各建一个 SelectableText，
-    // 选区互不相通（跨段拖选只能选中一段）。
-    //
-    // 上层已经提供了选区容器（阅读视图把整页包在一个 SelectionArea 里，这样
-    // 跨「节」也能连续选）时不要再套一层：嵌套的 SelectionArea 会互相抢手势，
-    // 外层反而选不中。
-    if (SelectionContainer.maybeOf(context) != null) return body;
-    return SelectionArea(child: body);
   }
 
   Future<void> _handleLink(
