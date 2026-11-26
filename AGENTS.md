@@ -186,7 +186,10 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/notes/editor_scroll_tail.dart` | 正文滚动区末尾的「半个视口」留白：三个视图共用的 `EditorScrollTail` 与纯函数 `editorBottomInset`。 |
 | `lib/ui/notes/markdown_blocks.dart` | Markdown 源码分块（`MarkdownSourceMap`，可逆拼回原文）与块的偏移量/任务序号。 |
 | `lib/ui/notes/markdown_tasks.dart` | 任务列表 `- [ ]` 的定位与勾选改写纯函数（跳过围栏代码块）。 |
-| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、正文目录的页内锚点（`#标题`）回调 `onTapAnchor`、围栏代码块交给 `markdown_code_block.dart`。 |
+| `lib/ui/notes/markdown_view.dart` | Markdown 渲染组件：双链、图片占位、任务复选框回调、正文目录的页内锚点（`#标题`）回调 `onTapAnchor`、围栏代码块交给 `markdown_code_block.dart`、表格交给 `markdown_table_view.dart`。 |
+| `lib/ui/notes/markdown_table.dart` | GFM 表格模型：解析 / 序列化（保留对齐与单元格内标记）、行列增删、按表格块切分（`splitMarkdownTables`）、剪贴板网格编解码。 |
+| `lib/ui/notes/markdown_table_view.dart` | 可交互表格：单元格就地编辑、悬停新增行列、列顶六点手柄选整列、右键/长按菜单（剪切复制粘贴 / 文本格式 / 对齐 / 插入删除行列）、矩形框选。 |
+| `lib/ui/notes/markdown_table_strings.dart` | 表格交互的全部文案（新增行列、右键菜单、对齐、文本格式）。 |
 | `lib/ui/notes/markdown_code_block.dart` | 围栏代码块渲染：右上角语言角标 + 点按复制、等宽铺满正文、超宽行内部横向滚动；正文交给 `markdown_code_highlight.dart` 上色。 |
 | `lib/ui/notes/markdown_code_highlight.dart` | 围栏代码块的语法高亮：`re_highlight`（highlight.js v11.9 移植）分词 + 自写扁平 `TextSpan` 渲染器、内语言表、浅/深两套对比度校验过的配色、按代码内容做的 LRU 缓存。 |
 | `lib/ui/notes/markdown_outline.dart` | 大纲纯函数：ATX 标题解析（跳过围栏代码块）、当前标题定位、按标题分节、父子关系与折叠可见性（`headingHasChildren` / `headingAncestorIndexes` / `visibleOutlineHeadings` / `collapsibleHeadingIndexes`），以及正文目录锚点解析（`decodeAnchorFragment` / `findHeadingByAnchor`）。 |
@@ -370,6 +373,16 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    正文末尾（三视图都一样）应留出约**半个视口**的空白：把笔记拖到最底部时，
    最后一行要能继续上滚到屏幕中间，而不是永远贴着页面下缘（参考 Obsidian）；
    短笔记不应因此凭空出现一大段可滚动留白（内容不足一屏时仍贴顶显示）。
+   表格验证点（详见 8 节的表格边界说明）：鼠标点某个单元格，**只有该单元格**
+   变成输入框，其余单元格与前后段落仍是渲染态（整表不会变成源码）；
+   鼠标移到最后一列右侧，右边多出一列带 `+` 的窄条、气泡提示「在右侧新增列」，
+   点击后表格多一列；鼠标移到最后一行的下缘，下方多出一行带 `+` 的窄条、
+   气泡提示「在下方新增行」，点击后表格多一行；鼠标移到某列顶部边缘，该列表头
+   出现六点手柄，点击即选中整列；选中后右键弹出菜单，剪切 / 复制 / 粘贴 /
+   文本格式 / 对齐 / 清空 / 删除都要生效；单元格里横向拖动是选文字，拖动跨出
+   单元格则改为**矩形框选**（可跨 N 行 × M 列，不是整行），右键同样有菜单；
+   编辑中 `Esc` 取消、`Enter` 下移一格、`Tab` 右移一格；触屏长按单元格等同右键；
+   阅读视图的表格只读（没有新增行列窄条），长按拖动仍归整页选区所有。
 6. 横竖屏验证点：模拟器旋转（或改窗口尺寸）后不应出现溢出条纹；
    竖屏是页面铺满 + 底部悬浮胶囊工具栏 + 单栏，点进笔记本打开新的笔记列表标签页；
    横屏（宽 >= 720）改为侧边导航 + 顶部标签条，宽 >= 840 且高 >= 480 时笔记本与笔记并排；
@@ -563,6 +576,15 @@ build(android): 放行局域网明文 HTTP 后端地址
   `highlight` 0.7.0 停在 highlight.js 9.x（2021 年）且 SDK 约束仍是 `<3.0.0`；
   也**不要**用 `re_highlight` 自带的 `TextSpanRenderer`：它输出深层嵌套 TextSpan，
   3000 行代码渲染要 50 秒以上（见该文件的注释与测试）。
+- **表格**：只支持 GFM 管道表格（`| a | b |` + 对齐分隔线），且必须**单独成块**
+  （前后是空行）；表格里出现空行会被当作表格结束，这是 GFM 的限制，不是 bug。
+  表格由 `markdown_table_view.dart` 整块接管：`flutter_markdown_plus` 的 `table`
+  分支会**无条件**用自己的 `Table` 覆盖 `builders['table']`，自定义构建器落不到
+  渲染树里，所以 `markdown_view.dart` 先用 `splitMarkdownTables` 把表格块切出来
+  单独渲染。回写走 `MarkdownTable.toMarkdown()`（标准格式，列宽空格会被规整）。
+  已知限制：单元格编辑框里显示的是 Markdown 源码（`**粗**` 这类标记会露出来），
+  渲染态不显示标记；增删列 / 行、对齐、框选与右键菜单在桌面端体验完整，
+  触屏通过长按菜单操作（没有悬停，新增行列靠菜单）。
 - **大纲只认 ATX 标题**（`# 标题`）：Setext 标题（`===` / `---` 下划线）不进大纲。
   正文里手写的 `[标题](#锚点)` 目录可以点（实时预览 / 阅读视图），但匹配是**宽松**的
   （GitHub slug → 去标点模糊匹配 → 前缀 / 包含），不是 CommonMark 的严格锚点语义：
