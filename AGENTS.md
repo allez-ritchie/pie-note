@@ -167,6 +167,7 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/data/note_repository.dart` | 业务门面：笔记本/笔记/搜索的增删改查，供 provider 调用（含「复制 + 删除」式的 `moveNote`）。 |
 | `lib/data/note_actions.dart` | 笔记操作结果类型（重命名 / 移动的返回值）。 |
 | `lib/data/note_pin_store.dart` | 置顶笔记的本机存储（后端无置顶字段，只存 `shared_preferences`）。 |
+| `lib/data/panel_layout_store.dart` | 可调分栏宽度的本机存储（笔记本左栏 / 大纲侧栏，只存 `shared_preferences`）。 |
 | `lib/data/note_text_edits.dart` | 标题 / 正文首行标题的纯文本编辑（重命名时同步 `# 标题`）。 |
 | `lib/state/note_actions.dart` | 列表与编辑器共用的笔记操作：重命名、移至笔记本、置顶、副本、批量删除 / 移动。 |
 | `lib/data/config_store.dart` | 配置持久化：`baseUrl` 走 `shared_preferences`，`password` 走 `flutter_secure_storage`。 |
@@ -195,7 +196,7 @@ multipart/form-data**（`/api/sources/json` 是只支持文本的 legacy 端点�
 | `lib/ui/sources/` | 来源页：列表（状态胶囊 / 轮询）、添加来源对话框（链接 / 文本 / 文件）、详情（正文 + 洞见）。 |
 | `lib/ui/chat/` | 「与笔记本对话」：会话管理、上下文勾选、模型覆盖、消息流与「保存为笔记」。 |
 | `lib/ui/settings/settings_screen.dart` | 后端地址、密码、连接测试、退出配置。 |
-| `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）、响应式断点 `layout.dart`、平台判定 `app_platform.dart`。 |
+| `lib/ui/common/` | 通用组件（加载/错误/空状态、确认对话框）、可拖拽分隔条 `resizable_divider.dart`、响应式断点 `layout.dart`、平台判定 `app_platform.dart`。 |
 | `lib/ui/theme/` | Material 3 主题（浅色/深色、动态取色）。 |
 | `linux/` | Linux 桌面端工程（Flutter 生成，窗口标题/默认尺寸在 `runner/my_application.cc`）。 |
 | `windows/` | Windows 桌面端工程（Flutter 生成，窗口标题/默认尺寸/最小尺寸在 `runner/main.cpp` 与 `runner/win32_window.*`）。 |
@@ -268,7 +269,7 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
 | 侧边导航 + 标签条 | 宽 >= 720 | `NavigationRail` + 顶部标签条 |
 | 双栏列表 | 宽 >= 840 且高 >= 480 | 笔记本页左列表、右笔记，点击不跳页 |
 | 编辑器分栏 | 宽 >= 900 且高 >= 420 | 阅读视图左右分栏（渲染 + Markdown 源码） |
-| 大纲侧栏 | 宽 >= 1080 且高 >= 420 | 编辑器右侧常驻大纲侧栏；更窄时点标题栏的目录图标弹底部面板 |
+| 大纲侧栏 | 宽 >= 1080 且高 >= 420 | 编辑器右侧常驻大纲侧栏，宽度可拖拽调整；更窄时点标题栏的目录图标弹底部面板 |
 
 多标签的形态同样只按宽度切换（不读 orientation）：
 
@@ -298,6 +299,12 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
 
 - 高度断点是必须的：手机横屏通常只有 400~450 高，只按宽度判定会把列表挤成两条细缝。
 - 宽窗口下页面内容用 `ContentFrame` 限宽居中，避免超长行；
+- **可调分栏**：笔记本双栏的左栏与大纲侧栏都用 `lib/ui/common/resizable_divider.dart`
+  的 `ResizableDivider`（键盘可达：聚焦后 ←/→ 微调，双击恢复默认；悬停变 `resizeColumn` 光标）。
+  宽度是**受控**的——组件只回传新宽度，父级夹到「两侧都能用」的范围后再渲染
+  （左栏 260 ~ 窗口宽 − 360；大纲 200 ~ 520 且正文至少 480）；
+  宽度**只在本设备记住**（`lib/data/panel_layout_store.dart` → shared_preferences，
+  与置顶同理：后端没有对应字段），拖动过程中只改内存，松手（`onWidthChangeEnd`）才落盘；
 - 桌面快捷键：编辑器内 `Ctrl/Cmd + S` 保存（`CallbackShortcuts`），保存按钮 tooltip 随平台显示 `Ctrl` / `⌘`。
 - 新增页面时请复用 `Responsive` / `ContentFrame`，不要再写魔法数字。
 
@@ -395,7 +402,12 @@ pwsh -File scripts/build_windows.ps1 -Bundle       # 额外归档 dist/pie-note-
    重启 App 仍在（本机偏好）；「移至笔记本」后原笔记本列表里消失、目标笔记本里出现，
    且已打开的笔记标签页仍指向新的笔记 id；多选（长按行 / 标题栏「选择」）后可用
    全选 / 反选 / 底部批量条（置顶 / 移至 / 复制 / 删除），部分失败有汇总提示。
-11. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
+11. 可调分栏验证点：宽窗口进入「笔记本」页，把鼠标移到左右双栏之间的分隔条上——
+   光标变成左右箭头、分隔线高亮，按住往右拖左栏变宽（最多到窗口宽 − 360），
+   往左拖最窄 260，右侧笔记列表不会被挤没；双击分隔条恢复默认宽度；
+   打开笔记的大纲侧栏后同样可拖宽（200 ~ 520，正文至少留 480），双击恢复；
+   调过的宽度重启 App 后仍生效（本机偏好），双击恢复默认后重启回到比例默认值。
+12. 桌面端验证点：`flutter build linux --release` / `flutter build windows --release` 产物可直接运行；
    宽窗口下双栏/侧边栏生效，把窗口拖窄到 420 附近自动退回悬浮工具栏 + 单栏；
    编辑器 `Ctrl+S` 保存成功并提示（Windows 上悬浮工具栏/双栏断点与 Linux 完全一致，
    因为两边都只读 Flutter 的可用宽高）。
