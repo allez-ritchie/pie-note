@@ -55,6 +55,9 @@ class EditorStrings {
   static const String outlineCollapseOne = '折叠此标题';
   static const String outlineExpandOne = '展开此标题';
 
+  /// 大纲侧栏左侧分隔条的提示：可左右拖动调宽，双击恢复默认。
+  static const String outlineResizeTooltip = '拖动调整大纲宽度，双击恢复默认';
+
   static String outlineCount(int count) => '$count 个标题';
 
   /// 目录里的锚点找不到对应标题（可能标题被改名 / 删掉了）。

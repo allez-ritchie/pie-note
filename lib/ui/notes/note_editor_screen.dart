@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import '../../state/providers.dart';
 import '../../state/workspace.dart';
 import '../common/formatters.dart';
 import '../common/layout.dart';
+import '../common/resizable_divider.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import '../home/workspace_strings.dart';
@@ -25,6 +27,26 @@ import 'markdown_view.dart';
 import 'notes_outline_panel.dart';
 
 enum _LeaveAction { save, discard, cancel }
+
+/// 笔记编辑页的大纲侧栏宽度约束（桌面端可拖拽调宽）。
+class OutlineLayout {
+  const OutlineLayout._();
+
+  /// 未拖动过时的默认宽度（与旧版固定宽度一致）。
+  static const double defaultWidth = 268;
+
+  /// 侧栏最小宽度：再窄标题行会被图标按钮与 H 级别标签挤爆。
+  static const double minWidth = 200;
+
+  /// 侧栏最大宽度：再宽就喧宾夺主。
+  static const double maxWidth = 520;
+
+  /// 正文区至少要留出的宽度：决定侧栏能拖到多宽。
+  static const double contentMinWidth = 480;
+
+  /// 大纲侧栏打开时正文区的限宽（也是侧栏可用宽度的上限依据）。
+  static const double maxFrameWidth = 1400;
+}
 
 /// 编辑器视图模式，对应 Obsidian「视图 + 模式」的简化：
 /// - [live] 实时预览：渲染态直接编辑，点按段落就在该段位置显示源码（Live Preview）；
@@ -505,6 +527,62 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   /// 大纲在宽窗口里是否以右侧常驻侧栏展示（窄窗口改为底部弹出面板）。
   bool _outlineOpen = false;
 
+  /// 大纲侧栏宽度（桌面端可拖拽左侧分隔条调整）。
+  ///
+  /// `null` 表示还没读到本机偏好，渲染时用 [OutlineLayout.defaultWidth]；
+  /// 用户拖动后立即生效，松手时才写入 shared_preferences。
+  double? _outlineWidth;
+
+  /// 打开大纲侧栏时读取本机记住的宽度（读失败就保持默认值）。
+  Future<void> _loadOutlineWidth() async {
+    final width = await ref
+        .read(panelLayoutStoreProvider)
+        .loadOutlinePaneWidth();
+    if (!mounted || width == null) return;
+    setState(() => _outlineWidth = width);
+  }
+
+  /// 大纲侧栏可用的宽度范围：正文至少保留 [OutlineLayout.contentMinWidth]，
+  /// 侧栏本身不小于 [OutlineLayout.minWidth]。
+  ({double min, double max}) _outlineBounds() {
+    // 侧栏在 ContentFrame 内，宽度受限宽后的正文区影响（见 build 里的
+    // maxWidth），因此按限宽后的可用宽度算上限，避免把正文挤成负数。
+    final frameWidth = math.min(
+      MediaQuery.sizeOf(context).width,
+      OutlineLayout.maxFrameWidth,
+    );
+    final max = (frameWidth - OutlineLayout.contentMinWidth).clamp(
+      OutlineLayout.minWidth,
+      OutlineLayout.maxWidth,
+    );
+    return (min: OutlineLayout.minWidth, max: max);
+  }
+
+  double _currentOutlineWidth() {
+    final bounds = _outlineBounds();
+    return (_outlineWidth ?? OutlineLayout.defaultWidth).clamp(
+      bounds.min,
+      bounds.max,
+    );
+  }
+
+  void _resizeOutline(double width) {
+    setState(() => _outlineWidth = width);
+  }
+
+  void _persistOutlineWidth() {
+    final width = _outlineWidth;
+    if (width == null) return;
+    unawaited(
+      ref.read(panelLayoutStoreProvider).saveOutlinePaneWidth(width),
+    );
+  }
+
+  void _resetOutlineWidth() {
+    setState(() => _outlineWidth = null);
+    unawaited(ref.read(panelLayoutStoreProvider).saveOutlinePaneWidth(null));
+  }
+
   /// 大纲跳转请求：每次点击都是新实例，实时预览据此滚动到对应段落。
   OutlineJumpRequest? _outlineJump;
 
@@ -632,7 +710,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
     final headings = _headings;
     final active = _currentHeadingIndex;
     if (_outlineIsSidebar) {
-      setState(() => _outlineOpen = !_outlineOpen);
+      final opening = !_outlineOpen;
+      setState(() => _outlineOpen = opening);
+      // 首次打开时再读本机记住的栏宽：没必要在每次进编辑器都摸一遍存储。
+      if (opening && _outlineWidth == null) unawaited(_loadOutlineWidth());
       return;
     }
     final picked = await showNotesOutlineSheet(
@@ -819,7 +900,9 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
           children: [
             Positioned.fill(
               child: ContentFrame(
-                maxWidth: _outlineOpen && _outlineIsSidebar ? 1400 : 1100,
+                maxWidth: _outlineOpen && _outlineIsSidebar
+                    ? OutlineLayout.maxFrameWidth
+                    : 1100,
                 child: _buildOutlineScaffold(scheme),
               ),
             ),
@@ -904,16 +987,30 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen>
   /// 正文 + 大纲侧栏。
   ///
   /// 大纲是「按需打开」的：常驻会挤压正文，且大多数短笔记用不到。
+  /// 桌面端可拖拽两栏之间的分隔条调宽侧栏（宽度按本设备偏好记住）。
   Widget _buildOutlineScaffold(ColorScheme scheme) {
     final sidebar = _outlineOpen && _outlineIsSidebar;
     if (!sidebar) return _buildBody(scheme);
+    final bounds = _outlineBounds();
+    final width = _currentOutlineWidth();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(child: _buildBody(scheme)),
-        const VerticalDivider(width: 1),
+        ResizableDivider(
+          key: const ValueKey<String>('outline-pane-divider'),
+          width: width,
+          minWidth: bounds.min,
+          maxWidth: bounds.max,
+          dragEdge: ResizeEdge.right,
+          tooltip: EditorStrings.outlineResizeTooltip,
+          semanticLabel: EditorStrings.outlineResizeTooltip,
+          onWidthChanged: _resizeOutline,
+          onWidthChangeEnd: _persistOutlineWidth,
+          onReset: _resetOutlineWidth,
+        ),
         SizedBox(
-          width: 268,
+          width: width,
           child: NotesOutlinePanel(
             headings: _headings,
             activeIndex: _currentHeadingIndex,

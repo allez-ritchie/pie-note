@@ -27,6 +27,9 @@ class NotebooksStrings {
   static const String loadErrorTitle = '笔记本加载失败';
   static const String sortHint = '按更新时间排序';
 
+  /// 双栏中间分隔条的提示：可左右拖动调宽，双击恢复默认。
+  static const String paneResizeTooltip = '拖动调整笔记本栏宽度，双击恢复默认';
+
   static String deleteMessage(String name) =>
       '将删除「$name」及其中的全部笔记，操作不可恢复。';
 

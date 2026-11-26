@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,16 +7,36 @@ import '../../data/api_models.dart';
 import '../../state/providers.dart';
 import '../common/formatters.dart';
 import '../common/layout.dart';
+import '../common/resizable_divider.dart';
 import '../common/strings.dart';
 import '../common/widgets.dart';
 import '../home/workspace_navigator.dart';
 import 'notebooks_strings.dart';
 import 'notes_screen.dart';
 
+/// 「笔记本 | 笔记」双栏的栏宽约束。
+///
+/// 左栏宽度可以拖拽调整（桌面端），但必须留出可用的面板范围：
+/// 左栏太窄会挤坏笔记本卡片，太宽会把右侧笔记列表压成一条缝。
+class NotebooksLayout {
+  const NotebooksLayout._();
+
+  /// 拖动时左栏能缩到的最小宽度（卡片仍能完整显示）。
+  static const double paneMinWidth = 260;
+
+  /// 未拖动过时，左栏默认宽度随窗口比例变化的区间（320 ~ 420）。
+  static const double paneDefaultMinWidth = 320;
+  static const double paneDefaultMaxWidth = 420;
+
+  /// 右侧笔记列表必须保留的最小宽度：决定左栏能拖到多宽。
+  static const double notesMinWidth = 360;
+}
+
 /// 笔记本列表（一级页面）。
 ///
 /// 宽屏（手机横屏 / 平板 / 桌面窗口）下自动变为「左笔记本、右笔记」双栏：
 /// 选中笔记本后右侧直接展示笔记列表，不再用二级页面跳转。
+/// 桌面端的左栏宽度可用中间的分隔条拖拽调整，并按本设备偏好记住。
 class NotebooksScreen extends ConsumerStatefulWidget {
   const NotebooksScreen({super.key});
 
@@ -24,6 +46,63 @@ class NotebooksScreen extends ConsumerStatefulWidget {
 
 class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
   bool _showArchived = false;
+
+  /// 用户拖过分隔条之后的左栏宽度；`null` 表示没调过（按窗口比例算默认值）。
+  ///
+  /// 栏宽是本设备的浏览偏好（后端没有对应字段），用户松开分隔条时写进
+  /// shared_preferences；读失败 / 首次启动时保持默认值，不影响使用。
+  double? _rememberedPaneWidth;
+
+  /// 双栏左栏的默认宽度：跟窗口走，但限制在可读范围内。
+  double _defaultPaneWidth(BuildContext context) =>
+      (MediaQuery.sizeOf(context).width * 0.32).clamp(
+        NotebooksLayout.paneDefaultMinWidth,
+        NotebooksLayout.paneDefaultMaxWidth,
+      );
+
+  /// 当前生效的左栏宽度：用户调过就用用户的，否则按窗口比例。
+  double _paneWidth(BuildContext context) =>
+      _rememberedPaneWidth ?? _defaultPaneWidth(context);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPaneWidth());
+  }
+
+  Future<void> _loadPaneWidth() async {
+    final width = await ref
+        .read(panelLayoutStoreProvider)
+        .loadNotebookPaneWidth();
+    if (!mounted || width == null) return;
+    setState(() => _rememberedPaneWidth = width);
+  }
+
+  /// 拖动过程中只改内存；落盘在松手时（[_persistPaneWidth]）做一次。
+  void _resizePane(double width) {
+    setState(() => _rememberedPaneWidth = width);
+  }
+
+  void _persistPaneWidth() {
+    final width = _rememberedPaneWidth;
+    if (width == null) return;
+    unawaited(ref.read(panelLayoutStoreProvider).saveNotebookPaneWidth(width));
+  }
+
+  /// 双击分隔条：清掉偏好，恢复「跟窗口比例」的默认宽度。
+  void _resetPaneWidth() {
+    setState(() => _rememberedPaneWidth = null);
+    unawaited(ref.read(panelLayoutStoreProvider).saveNotebookPaneWidth(null));
+  }
+
+  /// 双栏左栏允许的宽度范围：不能窄到把笔记本卡片挤坏，也不能宽到让
+  /// 右侧笔记列表只剩一条缝（窗口总宽 - 左栏 - 分隔条 - 右栏最小值）。
+  ({double min, double max}) _paneBounds(BuildContext context) {
+    final total = MediaQuery.sizeOf(context).width;
+    final min = NotebooksLayout.paneMinWidth;
+    final max = (total - NotebooksLayout.notesMinWidth).clamp(min, total);
+    return (min: min, max: max);
+  }
 
   /// 双栏布局下右侧选中的笔记本；`null` 表示「全部笔记」。
   String? _selectedNotebookId;
@@ -293,13 +372,15 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
           );
           // 单栏时（手机竖屏 / 横屏）也收敛内容宽度，横屏下不会把卡片拉得过宽。
           if (!twoPane) return ContentFrame(maxWidth: 780, child: list);
+          final bounds = _paneBounds(context);
+          final paneWidth = _paneWidth(context).clamp(bounds.min, bounds.max);
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                // 左栏随窗口弹性变化：窄窗口 320、宽窗口最多 420。
-                width: (MediaQuery.sizeOf(context).width * 0.32)
-                    .clamp(320.0, 420.0),
+                // 左栏宽度：默认随窗口弹性变化（窄窗口 320、宽窗口最多 420），
+                // 桌面端可拖拽中间的分隔条，调过的宽度按本设备偏好记住。
+                width: paneWidth,
                 child: Stack(
                   children: [
                     Positioned.fill(child: list),
@@ -316,7 +397,18 @@ class _NotebooksScreenState extends ConsumerState<NotebooksScreen> {
                   ],
                 ),
               ),
-              const VerticalDivider(width: 1),
+              ResizableDivider(
+                key: const ValueKey<String>('notebooks-pane-divider'),
+                width: paneWidth,
+                minWidth: bounds.min,
+                maxWidth: bounds.max,
+                dragEdge: ResizeEdge.left,
+                tooltip: NotebooksStrings.paneResizeTooltip,
+                semanticLabel: NotebooksStrings.paneResizeTooltip,
+                onWidthChanged: _resizePane,
+                onWidthChangeEnd: _persistPaneWidth,
+                onReset: _resetPaneWidth,
+              ),
               Expanded(
                 child: NotesScreen(
                   // 切换笔记本时重建，避免沿用上一条笔记的滚动位置与筛选词。

@@ -6,6 +6,7 @@ import '../data/api_models.dart';
 import '../data/config_store.dart';
 import '../data/note_pin_store.dart';
 import '../data/note_repository.dart';
+import '../data/panel_layout_store.dart';
 
 /// 配置存储。测试可通过 `overrideWithValue` 注入内存实现。
 final configStoreProvider = Provider<ConfigStore>((ref) => ConfigStore());
@@ -126,6 +127,10 @@ ChatRepository _requireChatRepository(Ref ref) {
 
 /// 置顶笔记的本机存储；测试可通过 `overrideWithValue` 注入内存实现。
 final notePinStoreProvider = Provider<NotePinStore>((ref) => NotePinStore());
+
+/// 可拖拽分栏宽度的本机存储（笔记本左栏 / 大纲侧栏）。
+final panelLayoutStoreProvider =
+    Provider<PanelLayoutStore>((ref) => PanelLayoutStore());
 
 /// 置顶笔记 id 集合。
 ///

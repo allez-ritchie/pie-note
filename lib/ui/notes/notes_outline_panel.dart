@@ -143,14 +143,21 @@ class _NotesOutlinePanelState extends State<NotesOutlinePanel> {
               Expanded(
                 child: Text(
                   EditorStrings.outline,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
               if (headings.isNotEmpty)
+                // 侧栏可以被拖窄到 200：计数只占一行的尾巴，超宽时省略，
+                // 避免把标题行挤成两行。
                 Text(
                   EditorStrings.outlineCount(headings.length),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.clip,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
